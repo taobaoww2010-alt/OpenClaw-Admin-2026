@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
-import { useWebSocketStore } from './websocket'
+import { useConnectionStore } from './connection'
 import type { OpenClawConfig, ConfigPatch } from '@/api/types'
 
 export const useConfigStore = defineStore('config', () => {
@@ -9,13 +9,13 @@ export const useConfigStore = defineStore('config', () => {
   const saving = ref(false)
   const lastError = ref<string | null>(null)
 
-  const wsStore = useWebSocketStore()
+  const connectionStore = useConnectionStore()
 
   async function fetchConfig() {
     loading.value = true
     lastError.value = null
     try {
-      config.value = await wsStore.rpc.getConfig()
+      config.value = await connectionStore.getRpc()!.getConfig()
     } catch (error) {
       config.value = null
       lastError.value = error instanceof Error ? error.message : String(error)
@@ -29,7 +29,7 @@ export const useConfigStore = defineStore('config', () => {
     saving.value = true
     lastError.value = null
     try {
-      await wsStore.rpc.patchConfig(patches)
+      await connectionStore.getRpc()!.patchConfig(patches)
       await fetchConfig()
     } catch (error) {
       lastError.value = error instanceof Error ? error.message : String(error)
@@ -43,7 +43,7 @@ export const useConfigStore = defineStore('config', () => {
     saving.value = true
     lastError.value = null
     try {
-      await wsStore.rpc.setConfig(newConfig)
+      await connectionStore.getRpc()!.setConfig(newConfig)
       await fetchConfig()
     } catch (error) {
       lastError.value = error instanceof Error ? error.message : String(error)
@@ -57,7 +57,7 @@ export const useConfigStore = defineStore('config', () => {
     saving.value = true
     lastError.value = null
     try {
-      await wsStore.rpc.applyConfig()
+      await connectionStore.getRpc()!.applyConfig()
     } catch (error) {
       lastError.value = error instanceof Error ? error.message : String(error)
       throw error

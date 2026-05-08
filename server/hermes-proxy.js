@@ -52,32 +52,41 @@ function requiresAuth(path, method) {
   return AUTH_REQUIRED_PREFIXES.some(prefix => path.startsWith(prefix))
 }
 
-// 认证中间件包装器 - 使用 HERMES_API_KEY 认证
+// 认证中间件包装器 - 支持 admin session token、Hermes API Key 三重认证
 function authWrapper(req, res, next) {
   if (!requiresAuth(req.path, req.method)) {
     return next()
   }
 
-  // 使用 HERMES_API_KEY 进行认证
-  const serverApiKey = hermesConfig.apiKey
-  if (!serverApiKey) {
-    // 没有配置 API Key，允许访问（向后兼容）
-    return next()
-  }
-
-  // 检查请求中的 Authorization 头
   const clientAuth = req.headers.authorization
   const bearerMatch = clientAuth ? clientAuth.match(/^Bearer\s+(.+)$/i) : null
-  const clientToken = bearerMatch ? bearerMatch[1].trim() : null
+  const clientToken = bearerMatch ? bearerMatch[1]?.trim() : null
 
-  // 如果客户端提供了正确的 API Key，或者没有提供 API Key（代理会使用服务器的）
-  // 都允许访问。代理服务器会在 buildProxyHeaders 中处理认证。
-  if (!clientToken || clientToken === serverApiKey) {
+  debug(`authWrapper: path=${req.path}, clientToken=${clientToken ? clientToken.substring(0,10)+'...' : '(empty)'}, hasServerKey=${!!hermesConfig.apiKey}`)
+
+  // 1. 如果是 Hermes API Key，直接放行
+  if (clientToken && hermesConfig.apiKey && clientToken === hermesConfig.apiKey) {
+    debug('authWrapper: Hermes API Key match, allowing')
     return next()
   }
 
-  // 客户端提供了错误的 API Key
-  res.status(401).json({ error: 'Unauthorized', message: 'Invalid Hermes API Key' })
+  // 2. 如果客户端没有提供有效 token 但后端配置了 HERMES_API_KEY，
+  //    自动注入服务器的 API Key（前端 Hermes 客户端没有 admin session token）
+  if ((!clientToken || clientToken !== hermesConfig.apiKey) && hermesConfig.apiKey) {
+    debug(`authWrapper: Auto-injecting server API Key for ${req.path}`)
+    req.headers.authorization = `Bearer ${hermesConfig.apiKey}`
+    return next()
+  }
+
+  // 3. 使用 admin 认证中间件（admin session token）
+  if (authMiddleware) {
+    debug('authWrapper: Using admin auth middleware')
+    return authMiddleware(req, res, next)
+  }
+
+  // 4. 没有配置认证，允许访问
+  debug('authWrapper: No auth configured, allowing')
+  return next()
 }
 
 // Hermes 连接配置（内存存储）
@@ -97,7 +106,7 @@ let dashboardStatus = {
   error: null,
 }
 
-// 查找 Hermes CLI 路径（支持 Windows 和 Linux）
+// 查找 Hermes CLI 路径（优先使用 venv）
 function findHermesPath() {
   const homeDir = process.env.HOME || process.env.USERPROFILE || ''
   const possiblePaths = []
@@ -112,8 +121,9 @@ function findHermesPath() {
     )
   } else {
     possiblePaths.push(
-      path.join(homeDir, '.local', 'bin', 'hermes'),
+      path.join(homeDir, 'Documents', 'hermes-agent-main', '.venv', 'bin', 'hermes'),
       path.join(homeDir, 'hermes-agent', '.venv', 'bin', 'hermes'),
+      path.join(homeDir, '.local', 'bin', 'hermes'),
       '/usr/local/bin/hermes',
       '/usr/bin/hermes',
       '/data/user/work/hermes-agent/.venv/bin/hermes',

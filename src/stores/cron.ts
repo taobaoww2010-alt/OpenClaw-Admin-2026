@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
-import { useWebSocketStore } from './websocket'
+import { useConnectionStore } from './connection'
 import type { CronJob, CronRunLogEntry, CronStatus, CronUpsertParams } from '@/api/types'
 
 export const useCronStore = defineStore('cron', () => {
@@ -14,13 +14,17 @@ export const useCronStore = defineStore('cron', () => {
   const saving = ref(false)
   const lastError = ref<string | null>(null)
 
-  const wsStore = useWebSocketStore()
+  const connStore = useConnectionStore()
+
+  function getRpc() {
+    return connStore.getRpc()
+  }
 
   async function fetchJobs() {
     loading.value = true
     lastError.value = null
     try {
-      jobs.value = await wsStore.rpc.listCrons()
+      jobs.value = await getRpc()!.listCrons()
     } catch (error) {
       jobs.value = []
       lastError.value = error instanceof Error ? error.message : String(error)
@@ -34,7 +38,7 @@ export const useCronStore = defineStore('cron', () => {
     statusLoading.value = true
     lastError.value = null
     try {
-      status.value = await wsStore.rpc.getCronStatus()
+      status.value = await getRpc()!.getCronStatus()
     } catch (error) {
       status.value = null
       lastError.value = error instanceof Error ? error.message : String(error)
@@ -53,7 +57,7 @@ export const useCronStore = defineStore('cron', () => {
     runsLoading.value = true
     lastError.value = null
     try {
-      runs.value = await wsStore.rpc.listCronRuns(jobId, limit)
+      runs.value = await getRpc()!.listCronRuns(jobId, limit)
     } catch (error) {
       runs.value = []
       lastError.value = error instanceof Error ? error.message : String(error)
@@ -72,7 +76,7 @@ export const useCronStore = defineStore('cron', () => {
     saving.value = true
     lastError.value = null
     try {
-      await wsStore.rpc.createCron(params)
+      await getRpc()!.createCron(params)
       await fetchOverview()
     } catch (error) {
       lastError.value = error instanceof Error ? error.message : String(error)
@@ -86,7 +90,7 @@ export const useCronStore = defineStore('cron', () => {
     saving.value = true
     lastError.value = null
     try {
-      await wsStore.rpc.updateCron(id, params)
+      await getRpc()!.updateCron(id, params)
       await fetchOverview()
       if (selectedJobId.value === id) {
         await fetchRuns(id)
@@ -103,7 +107,7 @@ export const useCronStore = defineStore('cron', () => {
     saving.value = true
     lastError.value = null
     try {
-      await wsStore.rpc.deleteCron(id)
+      await getRpc()!.deleteCron(id)
       if (selectedJobId.value === id) {
         clearRuns()
       }
@@ -120,7 +124,7 @@ export const useCronStore = defineStore('cron', () => {
     saving.value = true
     lastError.value = null
     try {
-      await wsStore.rpc.runCron(id, mode)
+      await getRpc()!.runCron(id, mode)
       await fetchOverview()
       await fetchRuns(id)
     } catch (error) {

@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
-import { useWebSocketStore } from './websocket'
+import { useConnectionStore } from './connection'
 import type { ChatMessage } from '@/api/types'
 import { byLocale, getActiveLocale } from '@/i18n/text'
 
@@ -58,6 +58,7 @@ export const useChatStore = defineStore('chat', () => {
   const messages = ref<ChatMessage[]>([])
   const loading = ref(false)
   const syncing = ref(false)
+  const connectionStore = useConnectionStore()
   const sending = ref(false)
   const lastError = ref<string | null>(null)
   const lastSyncedAt = ref<number | null>(null)
@@ -106,8 +107,6 @@ export const useChatStore = defineStore('chat', () => {
     }
     return toolProgress.value.get(agentId)!  
   }
-
-  const wsStore = useWebSocketStore()
 
   function toolCompletedDetail(toolName: string): string {
     const locale = getActiveLocale()
@@ -356,7 +355,7 @@ export const useChatStore = defineStore('chat', () => {
     try {
       const normalizedKey = key.trim()
       sessionKey.value = normalizedKey
-      messages.value = await wsStore.rpc.listChatHistory(normalizedKey)
+      messages.value = await connectionStore.getRpc()!.listChatHistory(normalizedKey)
       lastSyncedAt.value = Date.now()
     } catch (error) {
       if (!silent || clearError) {
@@ -931,7 +930,7 @@ export const useChatStore = defineStore('chat', () => {
     sending.value = true
     lastError.value = null
     try {
-      await wsStore.rpc.sendChatMessage({
+      await connectionStore.getRpc()!.sendChatMessage({
         sessionKey: sessionKey.value.trim(),
         message: text,
         model: model?.trim() || undefined,
@@ -974,7 +973,7 @@ export const useChatStore = defineStore('chat', () => {
 
     setAgentStatusPhase(agentId, 'aborting', { detail: byLocale('停止中...', 'Stopping...', getActiveLocale()) })
     try {
-      await wsStore.rpc.abortChat(undefined, sessionKey.value.trim())
+      await connectionStore.getRpc()!.abortChat(undefined, sessionKey.value.trim())
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error)
       setAgentStatusPhase(agentId, 'error', { runId: null, detail: reason })

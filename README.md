@@ -799,6 +799,111 @@ npm run dev:all
 
 ***
 
+## Docker 部署
+
+### 使用 Docker Compose（推荐）
+
+```bash
+# 1. 复制环境变量文件
+cp .env.example .env
+
+# 2. 编辑 .env 填写实际配置
+vim .env
+
+# 3. 构建并启动
+docker compose up -d --build
+
+# 4. 查看日志
+docker compose logs -f
+
+# 5. 停止服务
+docker compose down
+```
+
+### 使用 Docker 直接构建
+
+```bash
+# 构建镜像
+docker build -t openclaw-admin:latest .
+
+# 运行容器
+docker run -d \
+  --name openclaw-admin \
+  -p 3000:3000 \
+  -v $(pwd)/data:/app/data \
+  --env-file .env \
+  openclaw-admin:latest
+```
+
+### 数据持久化
+
+SQLite 数据库文件存储在 `data/` 目录，通过 volume 映射确保数据不丢失：
+
+```yaml
+volumes:
+  - ./data:/app/data
+```
+
+### 健康检查
+
+容器内置健康检查，可通过以下命令查看状态：
+
+```bash
+docker inspect --format='{{.State.Health.Status}}' openclaw-admin
+```
+
+***
+
+## 客户管理（多租户）
+
+OpenClaw Admin 支持多租户部署模式，允许为不同客户提供独立的配置和授权管理。
+
+### 功能特性
+
+- **客户列表管理**：查看、搜索、分页浏览所有客户
+- **独立配置**：每个客户可配置独立的模型地址、Hermes 服务、OpenClaw 网关等
+- **授权管理**：为每个客户生成独立的 License Key，支持激活/取消激活
+- **有效期控制**：可设置授权有效天数，到期自动失效
+- **状态监控**：实时显示客户授权状态、账户状态、用户使用情况
+
+### API 接口
+
+| 方法   | 路径                               | 说明           |
+| ------ | ---------------------------------- | -------------- |
+| GET    | `/api/customers`                   | 获取客户列表   |
+| GET    | `/api/customers/:id`               | 获取客户详情   |
+| POST   | `/api/customers`                   | 创建客户       |
+| PUT    | `/api/customers/:id`               | 更新客户信息   |
+| DELETE | `/api/customers/:id`               | 删除客户       |
+| POST   | `/api/customers/:id/activate`      | 激活客户授权   |
+| POST   | `/api/customers/:id/deactivate`    | 取消客户激活   |
+| GET    | `/api/customers/:id/config`        | 获取客户配置   |
+| PUT    | `/api/customers/:id/config`        | 保存客户配置   |
+| POST   | `/api/customers/check-license`     | 检查授权状态   |
+
+### 数据库表结构
+
+`customers` 表包含以下字段：
+
+| 字段            | 类型      | 说明         |
+| --------------- | --------- | ------------ |
+| id              | TEXT      | 主键         |
+| tenant_id       | TEXT      | 租户唯一标识 |
+| company_name    | TEXT      | 公司名称     |
+| contact_name    | TEXT      | 联系人       |
+| contact_email   | TEXT      | 联系邮箱     |
+| contact_phone   | TEXT      | 联系电话     |
+| license_key     | TEXT      | 授权密钥     |
+| license_activated | INTEGER | 是否激活     |
+| license_expiry  | TEXT      | 授权有效期   |
+| config          | TEXT      | 独立配置(JSON) |
+| status          | TEXT      | 账户状态     |
+| max_users       | INTEGER   | 最大用户数   |
+| current_users   | INTEGER   | 当前用户数   |
+| notes           | TEXT      | 备注         |
+
+***
+
 ## 安全说明
 
 - ⚠️ **禁止提交**真实 Gateway Token、API Key 或其他敏感信息

@@ -30,12 +30,12 @@ import {
 import { AddOutline, CheckmarkCircleOutline, CloseOutline, CreateOutline, RefreshOutline, SaveOutline, TrashOutline } from '@vicons/ionicons5'
 import { useI18n } from 'vue-i18n'
 import { useConfigStore } from '@/stores/config'
-import { useWebSocketStore } from '@/stores/websocket'
+import { useConnectionStore } from '@/stores/connection'
 import type { DataTableColumns } from 'naive-ui'
 import type { ConfigPatch, ModelProviderConfig, OpenClawConfig } from '@/api/types'
 
 const configStore = useConfigStore()
-const wsStore = useWebSocketStore()
+const connectionStore = useConnectionStore()
 const message = useMessage()
 const { t, locale } = useI18n()
 
@@ -1814,7 +1814,7 @@ async function handleDeleteProvider(providerIdInput: string): Promise<void> {
   }
 
   try {
-    await wsStore.rpc.setConfig(newConfig)
+await connectionStore.getRpc()!.setConfig(newConfig)
     await configStore.fetchConfig()
     if (selectedProviderId.value === providerId) {
       selectedProviderId.value = ''
@@ -1961,7 +1961,7 @@ async function handleSaveProvider(confirmed = false) {
   }
   
   try {
-    await wsStore.rpc.setConfig(newConfig)
+await connectionStore.getRpc()!.setConfig(newConfig)
     showSaveConfirmModal.value = false
     showEditProviderModal.value = false
     await configStore.fetchConfig()
@@ -2073,7 +2073,7 @@ async function handleCreateProvider(confirmed = false) {
   }
 
   try {
-    await wsStore.rpc.setConfig(newConfig)
+await connectionStore.getRpc()!.setConfig(newConfig)
     showSaveConfirmModal.value = false
     showCreateProviderModal.value = false
     await configStore.fetchConfig()

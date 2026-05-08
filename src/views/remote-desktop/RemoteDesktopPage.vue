@@ -29,7 +29,7 @@ import {
 } from '@vicons/ionicons5'
 import { useI18n } from 'vue-i18n'
 import { useRemoteDesktopStore } from '@/stores/remote-desktop'
-import { useWebSocketStore } from '@/stores/websocket'
+import { useConnectionStore } from '@/stores/connection'
 import type { RemoteDesktopNode } from '@/api/types'
 import DesktopCanvas from './components/DesktopCanvas.vue'
 import NodeSelector from './components/NodeSelector.vue'
@@ -37,7 +37,7 @@ import NodeSelector from './components/NodeSelector.vue'
 const message = useMessage()
 const { t } = useI18n()
 const desktopStore = useRemoteDesktopStore()
-const wsStore = useWebSocketStore()
+const connectionStore = useConnectionStore()
 
 const desktopCanvasRef = ref<InstanceType<typeof DesktopCanvas> | null>(null)
 const isFullscreen = ref(false)
@@ -83,7 +83,7 @@ async function loadNodes() {
   if (nodesLoading.value) return
   nodesLoading.value = true
   try {
-    const deviceNodes = await wsStore.rpc.listNodes()
+const deviceNodes = await connectionStore.getRpc()!.listNodes()
     nodes.value = deviceNodes.map((node: any) => ({
       id: node.id,
       name: node.name,

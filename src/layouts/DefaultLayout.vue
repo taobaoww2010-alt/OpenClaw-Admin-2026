@@ -1,56 +1,27 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { NLayout, NLayoutSider, NLayoutHeader, NLayoutContent } from 'naive-ui'
 import AppHeader from '@/components/layout/AppHeader.vue'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
-import { useWebSocketStore } from '@/stores/websocket'
-import { useHermesConnectionStore } from '@/stores/hermes/connection'
+import { useConnectionStore } from '@/stores/connection'
+import { useAuthStore } from '@/stores/auth'
 
 const collapsed = ref(false)
-const wsStore = useWebSocketStore()
-const connStore = useHermesConnectionStore()
-const route = useRoute()
-const router = useRouter()
+const connStore = useConnectionStore()
+const authStore = useAuthStore()
 
-const isOpenClaw = computed(() => connStore.currentGateway === 'openclaw')
+async function checkSetupAndConnect() {
+  connStore.connectOpenClaw()
+  connStore.connectHermes()
+}
 
 onMounted(() => {
-  if (isOpenClaw.value) {
-    wsStore.connect()
-  } else {
-    // Hermes 模式：自动连接 Hermes
-    connStore.connect()
-  }
-
-  // 如果当前页面不属于当前网关，自动跳转
-  const currentGateway = isOpenClaw.value ? 'openclaw' : 'hermes'
-  const routeGateway = route.meta?.gateway as string | undefined
-  if (routeGateway && routeGateway !== currentGateway) {
-    router.replace(isOpenClaw.value ? '/' : '/hermes/chat')
-  }
-})
-
-watch(isOpenClaw, (val) => {
-  if (val) {
-    wsStore.connect()
-    connStore.disconnect()
-  } else {
-    wsStore.disconnect()
-    // Hermes 模式：自动连接 Hermes
-    connStore.connect()
-  }
-
-  // 网关切换时，如果当前页面不属于新网关，自动跳转到首页
-  const currentGateway = val ? 'openclaw' : 'hermes'
-  const routeGateway = route.meta?.gateway as string | undefined
-  if (routeGateway && routeGateway !== currentGateway) {
-    router.push(val ? '/' : '/hermes/chat')
-  }
+  checkSetupAndConnect()
 })
 
 onUnmounted(() => {
-  wsStore.disconnect()
+  connStore.disconnectOpenClaw()
+  connStore.disconnectHermes()
 })
 </script>
 

@@ -28,6 +28,8 @@ import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome'
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core'
 import { faQq } from '@fortawesome/free-brands-svg-icons'
 import { useI18n } from 'vue-i18n'
+import { useChannelStore } from '@/stores/channel'
+import { useConnectionStore } from '@/stores/connection'
 import {
   faCircleCheck,
   faBuilding,

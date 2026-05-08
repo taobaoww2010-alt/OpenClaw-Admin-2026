@@ -1,10 +1,10 @@
 import { computed, onMounted, onUnmounted } from 'vue'
-import { useWebSocketStore } from '@/stores/websocket'
+import { useConnectionStore } from '@/stores/connection'
 import { useMonitorStore } from '@/stores/monitor'
 import type { RPCEvent, AgentEvent } from '@/api/types'
 
 export function useEventStream(eventTypes?: string[]) {
-  const wsStore = useWebSocketStore()
+  const connectionStore = useConnectionStore()
   const monitorStore = useMonitorStore()
   let cleanup: (() => void) | null = null
 
@@ -14,7 +14,7 @@ export function useEventStream(eventTypes?: string[]) {
   })
 
   onMounted(() => {
-    cleanup = wsStore.subscribe('event', (evt: unknown) => {
+    cleanup = connectionStore.subscribeWs('event', (evt: unknown) => {
       const rpcEvent = evt as RPCEvent
       const agentEvent: AgentEvent = {
         event: rpcEvent.event,

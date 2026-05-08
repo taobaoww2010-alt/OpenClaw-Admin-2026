@@ -25,13 +25,13 @@ import {
 } from '@vicons/ionicons5'
 import { useI18n } from 'vue-i18n'
 import { useTerminalStore } from '@/stores/terminal'
-import { useWebSocketStore } from '@/stores/websocket'
+import { useConnectionStore } from '@/stores/connection'
 import type { DeviceNode } from '@/api/types'
 
 const message = useMessage()
 const { t } = useI18n()
 const terminalStore = useTerminalStore()
-const wsStore = useWebSocketStore()
+const connectionStore = useConnectionStore()
 
 const terminalContainerRef = ref<HTMLDivElement | null>(null)
 const isFullscreen = ref(false)
@@ -77,7 +77,7 @@ async function loadNodes() {
   if (nodesLoading.value) return
   nodesLoading.value = true
   try {
-    nodes.value = await wsStore.rpc.listNodes()
+  nodes.value = await connectionStore.getRpc()!.listNodes()
   } catch {
     nodes.value = []
   } finally {

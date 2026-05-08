@@ -33,7 +33,7 @@ import {
 import { useI18n } from 'vue-i18n'
 import { useOfficeStore } from '@/stores/office'
 import { useChatStore } from '@/stores/chat'
-import { useWebSocketStore } from '@/stores/websocket'
+import { useConnectionStore } from '@/stores/connection'
 import { useConfigStore } from '@/stores/config'
 import { useSkillStore } from '@/stores/skill'
 import { useSessionStore } from '@/stores/session'
@@ -54,7 +54,7 @@ const message = useMessage()
 const { t, locale } = useI18n()
 const officeStore = useOfficeStore()
 const chatStore = useChatStore()
-const wsStore = useWebSocketStore()
+const connectionStore = useConnectionStore()
 const configStore = useConfigStore()
 const skillStore = useSkillStore()
 const sessionStore = useSessionStore()
@@ -194,7 +194,7 @@ async function fetchSessionTokenUsage(rawKey: string) {
   sessionTokenUsageLoading.value = true
 
   try {
-    const usageResult = await wsStore.rpc.getSessionsUsage({
+    const usageResult = await connectionStore.getRpc()!.getSessionsUsage({
       key,
       limit: 1,
     })
@@ -2058,7 +2058,7 @@ onMounted(async () => {
   document.addEventListener('click', handleCodeCopy)
 
   eventCleanups.push(
-    wsStore.subscribe('event', (evt: unknown) => {
+    connectionStore.subscribeWs('event', (evt: unknown) => {
       const data = evt as { event?: string; payload?: unknown }
       const eventName = data.event || ''
       if (

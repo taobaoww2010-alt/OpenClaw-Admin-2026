@@ -30,7 +30,7 @@ import { useChatStore } from '@/stores/chat'
 import { useConfigStore } from '@/stores/config'
 import { useSessionStore } from '@/stores/session'
 import { useSkillStore } from '@/stores/skill'
-import { useWebSocketStore } from '@/stores/websocket'
+import { useConnectionStore } from '@/stores/connection'
 import { formatDate, formatRelativeTime, parseSessionKey, truncate } from '@/utils/format'
 import { renderSimpleMarkdown } from '@/utils/markdown'
 import { useEdgeTTS } from '@/composables/useEdgeTTS'
@@ -44,7 +44,7 @@ const chatStore = useChatStore()
 const configStore = useConfigStore()
 const sessionStore = useSessionStore()
 const skillStore = useSkillStore()
-const wsStore = useWebSocketStore()
+const connectionStore = useConnectionStore()
 const { t, locale } = useI18n()
 
 const sessionKeyInput = ref('')
@@ -337,7 +337,7 @@ async function fetchSessionTokenUsage(rawKey: string) {
   sessionTokenUsageLoading.value = true
 
   try {
-    const usageResult = await wsStore.rpc.getSessionsUsage({
+    const usageResult = await connectionStore.getRpc()!.getSessionsUsage({
       key,
       limit: 1,
     })
@@ -2549,7 +2549,7 @@ onMounted(async () => {
   document.addEventListener('click', handleCodeCopy)
 
   eventCleanups.push(
-    wsStore.subscribe('event', (evt: unknown) => {
+    connectionStore.subscribeWs('event', (evt: unknown) => {
       const data = evt as { event?: string; payload?: unknown }
       const eventName = data.event || ''
       if (

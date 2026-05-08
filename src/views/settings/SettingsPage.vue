@@ -15,23 +15,29 @@ import {
   NSlider,
   NInputNumber,
   NDivider,
+  NModal,
+  NTag,
   useMessage,
+  type FormInst,
+  type FormItemRule,
+  NIcon,
 } from 'naive-ui'
+import {
+  VolumeHighOutline,
+  StopOutline,
+  EyeOutline,
+  EyeOffOutline,
+} from '@vicons/ionicons5'
 import { useI18n } from 'vue-i18n'
 import { useThemeStore, type ThemeMode } from '@/stores/theme'
-import { useWebSocketStore } from '@/stores/websocket'
+import { useConnectionStore } from '@/stores/connection'
 import { useAuthStore } from '@/stores/auth'
 import { useTTSSettings } from '@/composables/useTTSSettings'
 import { useEdgeTTS } from '@/composables/useEdgeTTS'
 import { ConnectionState } from '@/api/types'
-import {
-  VolumeHighOutline,
-  StopOutline,
-} from '@vicons/ionicons5'
-import { NIcon } from 'naive-ui'
 
 const themeStore = useThemeStore()
-const wsStore = useWebSocketStore()
+const connectionStore = useConnectionStore()
 const authStore = useAuthStore()
 const { t } = useI18n()
 const message = useMessage()
@@ -48,6 +54,51 @@ const configForm = ref({
   OPENCLAW_AUTH_PASSWORD: '', // Gateway 密码认证
 })
 
+// 数据库配置（模型、Hermes）
+const dbConfigLoading = ref(false)
+const dbConfigSaving = ref(false)
+const dbConfigTesting = ref(false)
+const dbConfig = ref({
+  company_name: '',
+  company_description: '',
+  model_url: '',
+  model_api_key: '',
+  model_name: '',
+  hermes_web_url: '',
+  hermes_api_url: '',
+  hermes_api_key: '',
+})
+const licenseKey = ref('')
+const licenseActivated = ref(false)
+const licenseExpiry = ref('')
+const showLicense = ref(false)
+const modelTestResult = ref<{ ok: boolean; message: string } | null>(null)
+const hermesTestResult = ref<{ ok: boolean; message: string } | null>(null)
+
+const modelFormRef = ref<FormInst | null>(null)
+const hermesFormRef = ref<FormInst | null>(null)
+
+const modelRules: Record<string, FormItemRule[]> = {
+  model_url: [
+    { required: true, message: '请输入模型地址', trigger: 'blur' },
+    { type: 'url', message: '请输入有效的 URL (http/https/ws/wss)', trigger: 'blur' },
+  ],
+  model_name: [
+    { required: true, message: '请输入模型名称', trigger: 'blur' },
+  ],
+}
+
+const hermesRules: Record<string, FormItemRule[]> = {
+  hermes_web_url: [
+    { required: true, message: '请输入 Hermes Web 地址', trigger: 'blur' },
+    { type: 'url', message: '请输入有效的 URL', trigger: 'blur' },
+  ],
+  hermes_api_url: [
+    { required: true, message: '请输入 Hermes API 地址', trigger: 'blur' },
+    { type: 'url', message: '请输入有效的 URL', trigger: 'blur' },
+  ],
+}
+
 // TTS settings
 const { settings: ttsSettings, resetSettings: resetTTSSettings, updateSettings: updateTTSSettings } = useTTSSettings()
 const ttsVoices = ref<{ label: string; value: string; lang?: string }[]>([])
@@ -62,10 +113,10 @@ const themeOptions = computed(() => ([
 ]))
 
 const connectionStatus = computed(() => {
-  switch (wsStore.state) {
+  switch (connectionStore.openclaw.state) {
     case ConnectionState.CONNECTED: return { text: t('pages.settings.statusConnected'), type: 'success' as const }
     case ConnectionState.CONNECTING: return { text: t('pages.settings.statusConnecting'), type: 'info' as const }
-    case ConnectionState.RECONNECTING: return { text: t('pages.settings.statusReconnecting', { count: wsStore.reconnectAttempts }), type: 'warning' as const }
+    case ConnectionState.RECONNECTING: return { text: t('pages.settings.statusReconnecting', { count: connectionStore.openclaw.reconnectAttempts }), type: 'warning' as const }
     case ConnectionState.FAILED: return { text: t('pages.settings.statusFailed'), type: 'error' as const }
     default: return { text: t('pages.settings.statusDisconnected'), type: 'error' as const }
   }
@@ -242,16 +293,463 @@ function handleResetTTS() {
 
 onMounted(() => {
   loadConfig()
+  loadDBConfig()
   loadTTSSettings()
 })
+
+// ---- 数据库配置（模型、Hermes） ----
+
+async function loadDBConfig() {
+  dbConfigLoading.value = true
+  try {
+    const token = authStore.getToken()
+    const res = await fetch('/api/setup/status', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    })
+    const data = await res.json()
+    if (data.ok) {
+      licenseKey.value = data.licenseKey || ''
+      licenseActivated.value = data.licenseActivated || false
+      licenseExpiry.value = data.licenseExpiry || ''
+      dbConfig.value = {
+        company_name: data.companyName || '',
+        company_description: data.companyDescription || '',
+        model_url: data.modelUrl || '',
+        model_api_key: data.modelApiKey || '',
+        model_name: data.modelName || '',
+        hermes_web_url: data.hermesWebUrl || '',
+        hermes_api_url: data.hermesApiUrl || '',
+        hermes_api_key: data.hermesApiKey || '',
+      }
+    }
+  } catch (e) {
+    message.error('加载配置失败')
+  } finally {
+    dbConfigLoading.value = false
+  }
+}
+
+function copyLicenseKey() {
+  if (licenseKey.value) {
+    navigator.clipboard.writeText(licenseKey.value)
+    message.success('已复制')
+  }
+}
+
+function maskLicenseKey(key: string) {
+  if (!key) return '生成中...'
+  return key.substring(0, 4) + '••••••••••••••'
+}
+
+const activationCode = ref('')
+const showActivationModal = ref(false)
+const activating = ref(false)
+
+function handleActivate() {
+  activationCode.value = ''
+  showActivationModal.value = true
+}
+
+async function confirmActivate() {
+  if (!activationCode.value || activationCode.value.trim().length < 16) {
+    message.error('激活码至少16位')
+    return
+  }
+  
+  activating.value = true
+  try {
+    const token = authStore.getToken()
+    const res = await fetch('/api/license/activate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ activationCode: activationCode.value.trim() }),
+    })
+    const data = await res.json()
+    if (data.ok) {
+      licenseActivated.value = true
+      licenseExpiry.value = data.expiry
+      message.success('系统已激活')
+      showActivationModal.value = false
+    } else {
+      message.error(data.error || '激活失败')
+    }
+  } catch (e) {
+    message.error('激活请求失败')
+  } finally {
+    activating.value = false
+  }
+}
+
+async function handleDeactivate() {
+  try {
+    const token = authStore.getToken()
+    const res = await fetch('/api/license/deactivate', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` },
+    })
+    const data = await res.json()
+    if (data.ok) {
+      licenseActivated.value = false
+      licenseExpiry.value = ''
+      message.info('已取消激活')
+    }
+  } catch (e) {
+    message.error('操作失败')
+  }
+}
+
+function formatDate(dateStr: string) {
+  if (!dateStr) return '-'
+  try {
+    return new Date(dateStr).toLocaleDateString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    })
+  } catch {
+    return dateStr
+  }
+}
+
+async function saveDBConfig() {
+  let valid = true
+  
+  if (modelFormRef.value) {
+    try {
+      await modelFormRef.value.validate()
+    } catch (e) {
+      valid = false
+    }
+  }
+  
+  if (hermesFormRef.value) {
+    try {
+      await hermesFormRef.value.validate()
+    } catch (e) {
+      valid = false
+    }
+  }
+  
+  if (!valid) {
+    message.warning('请检查填写内容')
+    return
+  }
+
+  dbConfigSaving.value = true
+  try {
+    const token = authStore.getToken()
+    // 保存公司
+    if (dbConfig.value.company_name) {
+      await fetch('/api/setup/save-company', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({
+          company_name: dbConfig.value.company_name,
+          company_description: dbConfig.value.company_description,
+        })
+      })
+    }
+    // 保存模型
+    await fetch('/api/setup/save-model', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({
+        model_url: dbConfig.value.model_url,
+        model_api_key: dbConfig.value.model_api_key,
+        model_name: dbConfig.value.model_name,
+      })
+    })
+    // 保存 Hermes
+    await fetch('/api/setup/save-hermes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({
+        web_url: dbConfig.value.hermes_web_url,
+        api_url: dbConfig.value.hermes_api_url,
+        api_key: dbConfig.value.hermes_api_key,
+      })
+    })
+    message.success('配置已保存')
+    // 重新加载配置以确保显示最新状态
+    loadDBConfig()
+  } catch (e) {
+    message.error('保存失败')
+  } finally {
+    dbConfigSaving.value = false
+  }
+}
+
+async function testModel() {
+  if (!dbConfig.value.model_url || !dbConfig.value.model_name) {
+    message.warning('请填写模型地址和名称')
+    return
+  }
+  
+  dbConfigTesting.value = true
+  const startTime = Date.now()
+  try {
+    const token = authStore.getToken()
+    const res = await fetch('/api/setup/test-model', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({
+        model_url: dbConfig.value.model_url,
+        model_api_key: dbConfig.value.model_api_key,
+        model_name: dbConfig.value.model_name,
+      })
+    })
+    const duration = Date.now() - startTime
+    const data = await res.json()
+    modelTestResult.value = { ok: data.ok, message: data.error || data.message || '' }
+    if (data.ok) {
+      message.success(`模型连接成功 (${duration}ms)`)
+    } else {
+      message.error(data.error || '连接失败')
+    }
+  } catch (e) {
+    modelTestResult.value = { ok: false, message: '网络错误' }
+    message.error('网络错误')
+  } finally {
+    dbConfigTesting.value = false
+  }
+}
+
+async function testHermes() {
+  if (!dbConfig.value.hermes_web_url || !dbConfig.value.hermes_api_url) {
+    message.warning('请填写 Hermes Web 地址和 API 地址')
+    return
+  }
+  dbConfigTesting.value = true
+  hermesTestResult.value = null
+  const startTime = Date.now()
+  try {
+    const token = authStore.getToken()
+    const res = await fetch('/api/setup/test-hermes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({
+        web_url: dbConfig.value.hermes_web_url,
+        api_url: dbConfig.value.hermes_api_url,
+        api_key: dbConfig.value.hermes_api_key,
+      })
+    })
+    const duration = Date.now() - startTime
+    const data = await res.json()
+    hermesTestResult.value = { ok: data.ok, message: data.error || data.message || '' }
+    if (data.ok) {
+      message.success(`Hermes 连接成功 (${duration}ms)`)
+    } else {
+      message.error(data.error || '连接失败')
+    }
+  } catch (e) {
+    hermesTestResult.value = { ok: false, message: '网络错误' }
+    message.error('网络错误')
+  } finally {
+    dbConfigTesting.value = false
+  }
+}
 </script>
 
 <template>
-  <NSpace vertical :size="16">
+  <NSpace vertical :size="24">
+    <div>
+      <NText strong style="font-size: 18px;">系统身份</NText>
+      <NText depth="3" style="font-size: 14px; margin-left: 8px;">配置公司信息与管理员授权</NText>
+    </div>
+
+    <NSpace vertical :size="16">
+      <!-- License Key -->
+      <NCard :title="licenseActivated ? '已激活' : '未激活'" class="app-card">
+        <NSpace vertical :size="16">
+          <NSpace align="center">
+            <NTag :type="licenseActivated ? 'success' : 'error'" size="medium">
+              {{ licenseActivated ? '授权生效中' : '系统未授权' }}
+            </NTag>
+            <NText depth="3" v-if="licenseActivated">
+              有效期至：{{ formatDate(licenseExpiry) }}
+            </NText>
+          </NSpace>
+          
+          <NText strong style="font-size: 16px; letter-spacing: 1px; font-family: monospace;">
+            {{ showLicense ? licenseKey : maskLicenseKey(licenseKey) }}
+          </NText>
+          
+          <NSpace align="center">
+            <NButton quaternary circle size="small" @click="showLicense = !showLicense">
+              <template #icon>
+                <NIcon :component="showLicense ? EyeOffOutline : EyeOutline" />
+              </template>
+            </NButton>
+            <NButton size="small" @click="copyLicenseKey">
+              复制密钥
+            </NButton>
+            <NButton v-if="!licenseActivated" type="primary" size="small" @click="handleActivate">
+              输入激活码
+            </NButton>
+            <NButton v-if="licenseActivated" type="error" quaternary size="small" @click="handleDeactivate">
+              取消激活
+            </NButton>
+          </NSpace>
+        </NSpace>
+      </NCard>
+
+    <!-- 公司信息 -->
+    <NCard title="公司信息" class="app-card">
+      <NSpin :show="dbConfigLoading">
+        <NForm label-placement="left" label-width="100" style="max-width: 600px;">
+          <NFormItem label="公司名称">
+            <NInput
+              v-model:value="dbConfig.company_name"
+              placeholder="例如：道一数字科技"
+              autocomplete="new-password"
+            />
+          </NFormItem>
+          <NFormItem label="公司简介">
+            <NInput
+              v-model:value="dbConfig.company_description"
+              type="textarea"
+              placeholder="简要描述公司业务范围..."
+              :autosize="{ minRows: 2, maxRows: 4 }"
+              autocomplete="new-password"
+            />
+          </NFormItem>
+        </NForm>
+      </NSpin>
+    </NCard>
+    </NSpace>
+
+    <NDivider style="margin: 0;" />
+
+    <div>
+      <NText strong style="font-size: 18px;">服务连接</NText>
+      <NText depth="3" style="font-size: 14px; margin-left: 8px;">配置大模型与 Hermes 主控地址</NText>
+    </div>
+
+    <NSpace vertical :size="16">
+    <!-- 大模型配置 -->
+    <NCard title="大模型连接" class="app-card">
+      <NAlert v-if="modelTestResult?.ok" type="success" :bordered="false" style="margin-bottom: 16px;">
+        模型连接正常
+      </NAlert>
+      <NSpin :show="dbConfigLoading">
+        <NForm
+          ref="modelFormRef"
+          :model="dbConfig"
+          :rules="modelRules"
+          label-placement="left"
+          label-width="100"
+          style="max-width: 600px;"
+        >
+          <NFormItem label="模型地址" path="model_url">
+            <NInput
+              v-model:value="dbConfig.model_url"
+              placeholder="例如：http://192.168.31.164:8080/v1"
+              autocomplete="new-password"
+            />
+          </NFormItem>
+          <NFormItem label="API Key" path="model_api_key">
+            <NInput
+              v-model:value="dbConfig.model_api_key"
+              type="password"
+              show-password-on="click"
+              placeholder="可选"
+              autocomplete="new-password"
+            />
+          </NFormItem>
+          <NFormItem label="模型名称" path="model_name">
+            <NInput
+              v-model:value="dbConfig.model_name"
+              placeholder="例如：Qwen3.6-27B-UD-Q4_K_XL.gguf"
+              autocomplete="new-password"
+            />
+          </NFormItem>
+          <NFormItem label="">
+            <NSpace>
+              <NButton :loading="dbConfigTesting" @click="testModel">
+                {{ modelTestResult?.ok ? '✅ 已验证' : '测试连接' }}
+              </NButton>
+            </NSpace>
+          </NFormItem>
+          <p v-if="modelTestResult?.message && !modelTestResult.ok" style="color: #ef4444; margin: 0; font-size: 13px;">
+            {{ modelTestResult.message }}
+          </p>
+        </NForm>
+      </NSpin>
+    </NCard>
+
+    <!-- Hermes 配置 -->
+    <NCard title="Hermes 主控" class="app-card">
+      <NAlert v-if="hermesTestResult?.ok" type="success" :bordered="false" style="margin-bottom: 16px;">
+        Hermes 连接正常
+      </NAlert>
+      <NSpin :show="dbConfigLoading">
+        <NForm
+          ref="hermesFormRef"
+          :model="dbConfig"
+          :rules="hermesRules"
+          label-placement="left"
+          label-width="100"
+          style="max-width: 600px;"
+        >
+          <NFormItem label="Web 地址" path="hermes_web_url">
+            <NInput
+              v-model:value="dbConfig.hermes_web_url"
+              placeholder="例如：http://localhost:9119"
+              autocomplete="new-password"
+            />
+          </NFormItem>
+          <NFormItem label="API 地址" path="hermes_api_url">
+            <NInput
+              v-model:value="dbConfig.hermes_api_url"
+              placeholder="例如：http://localhost:8642"
+              autocomplete="new-password"
+            />
+          </NFormItem>
+          <NFormItem label="API Key" path="hermes_api_key">
+            <NInput
+              v-model:value="dbConfig.hermes_api_key"
+              type="password"
+              show-password-on="click"
+              placeholder="可选"
+              autocomplete="new-password"
+            />
+          </NFormItem>
+          <NFormItem label="">
+            <NSpace>
+              <NButton :loading="dbConfigTesting" @click="testHermes">
+                {{ hermesTestResult?.ok ? '✅ 已验证' : '测试连接' }}
+              </NButton>
+            </NSpace>
+          </NFormItem>
+          <p v-if="hermesTestResult?.message && !hermesTestResult.ok" style="color: #ef4444; margin: 0; font-size: 13px;">
+            {{ hermesTestResult.message }}
+          </p>
+        </NForm>
+      </NSpin>
+    </NCard>
+
+    <!-- 保存按钮 -->
+    <NCard class="app-card">
+      <NSpace justify="end">
+        <NButton type="primary" :loading="dbConfigSaving" @click="saveDBConfig" size="large">
+          保存所有配置
+        </NButton>
+      </NSpace>
+    </NCard>
+    </NSpace>
+
+    <NDivider style="margin: 0;" />
+
+    <div>
+      <NText strong style="font-size: 18px;">网关与环境</NText>
+      <NText depth="3" style="font-size: 14px; margin-left: 8px;">OpenClaw Gateway 与管理员账号配置</NText>
+    </div>
+
+    <NSpace vertical :size="16">
     <NCard :title="t('pages.settings.connectionSettings')" class="app-card">
       <NAlert :type="connectionStatus.type" :bordered="false">
         {{ t('pages.settings.currentStatus', { status: connectionStatus.text }) }}
-        <span v-if="wsStore.lastError">（{{ wsStore.lastError }}）</span>
+        <span v-if="connectionStore.openclaw.error">（{{ connectionStore.openclaw.error }}）</span>
       </NAlert>
     </NCard>
 
@@ -262,6 +760,7 @@ onMounted(() => {
             <NInput
               v-model:value="configForm.AUTH_USERNAME"
               :placeholder="t('pages.settings.authUsernamePlaceholder')"
+              autocomplete="new-password"
             />
           </NFormItem>
           
@@ -271,6 +770,7 @@ onMounted(() => {
               type="password"
               show-password-on="click"
               :placeholder="t('pages.settings.authPasswordPlaceholder')"
+              autocomplete="new-password"
             />
           </NFormItem>
           
@@ -278,6 +778,7 @@ onMounted(() => {
             <NInput
               v-model:value="configForm.OPENCLAW_WS_URL"
               :placeholder="t('pages.settings.openclawUrlPlaceholder')"
+              autocomplete="new-password"
             />
           </NFormItem>
           
@@ -287,6 +788,7 @@ onMounted(() => {
               type="password"
               show-password-on="click"
               :placeholder="t('pages.settings.openclawTokenPlaceholder')"
+              autocomplete="new-password"
             />
           </NFormItem>
           
@@ -296,6 +798,7 @@ onMounted(() => {
               type="password"
               show-password-on="click"
               :placeholder="t('pages.settings.openclawPasswordPlaceholder')"
+              autocomplete="new-password"
             />
           </NFormItem>
           
@@ -313,7 +816,16 @@ onMounted(() => {
         {{ t('pages.settings.envSettingsHint') }}
       </NAlert>
     </NCard>
+    </NSpace>
 
+    <NDivider style="margin: 0;" />
+
+    <div>
+      <NText strong style="font-size: 18px;">个性化</NText>
+      <NText depth="3" style="font-size: 14px; margin-left: 8px;">外观主题与语音合成设置</NText>
+    </div>
+
+    <NSpace vertical :size="16">
     <NCard :title="t('pages.settings.appearanceSettings')" class="app-card">
       <NForm label-placement="left" label-width="120" style="max-width: 500px;">
         <NFormItem :label="t('pages.settings.themeMode')">
@@ -503,6 +1015,9 @@ onMounted(() => {
         </NSpace>
       </NSpin>
     </NCard>
+    </NSpace>
+
+    <NDivider style="margin: 0;" />
 
     <NCard :title="t('pages.settings.about')" class="app-card">
       <NSpace vertical :size="8">
@@ -515,5 +1030,25 @@ onMounted(() => {
         </NText>
       </NSpace>
     </NCard>
+
+    <!-- Activation Modal -->
+    <NModal
+      v-model:show="showActivationModal"
+      preset="dialog"
+      title="输入激活码"
+      :positive-text="'激活'"
+      :negative-text="'取消'"
+      :show-icon="false"
+      :positive-button-props="{ loading: activating }"
+      @positive-click="confirmActivate"
+    >
+      <NInput
+        v-model:value="activationCode"
+        placeholder="请输入16位以上激活码"
+        type="textarea"
+        :autosize="{ minRows: 2, maxRows: 4 }"
+        style="margin-top: 16px;"
+      />
+    </NModal>
   </NSpace>
 </template>

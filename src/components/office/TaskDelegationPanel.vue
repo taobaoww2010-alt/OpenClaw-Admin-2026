@@ -32,14 +32,14 @@ import {
 import { useI18n } from 'vue-i18n'
 import { useWizardStore, type WizardTask, type TaskConversation } from '@/stores/wizard'
 import { useAgentStore } from '@/stores/agent'
-import { useWebSocketStore } from '@/stores/websocket'
+import { useConnectionStore } from '@/stores/connection'
 import { formatRelativeTime } from '@/utils/format'
 
 const { t } = useI18n()
 const message = useMessage()
 const wizardStore = useWizardStore()
 const agentStore = useAgentStore()
-const wsStore = useWebSocketStore()
+ const connectionStore = useConnectionStore()
 
 const tasks = computed(() => wizardStore.tasks)
 const showDetailModal = ref(false)
@@ -123,7 +123,7 @@ async function executeWithSessionsSeed(task: WizardTask) {
     const sessionKey = `agent:${agentId}:main:dm:task-${task.id}-${Date.now()}`
     
     try {
-      const result = await wsStore.rpc.spawnSession({
+      const result = await connectionStore.getRpc()!.spawnSession({
         agentId,
         channel: 'main',
         peer: `task-${task.id}`,
@@ -162,7 +162,7 @@ async function executeWithRun(task: WizardTask) {
     const sessionKey = `agent:${agentId}:main:dm:task-${task.id}-${Date.now()}`
     
     try {
-      const result = await wsStore.rpc.callAgent({
+      const result = await connectionStore.getRpc()!.callAgent({
         sessionKey,
         message: taskMessage,
       })

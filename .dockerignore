@@ -1,0 +1,13 @@
+node_modules
+npm-debug.log
+dist
+data/*.db
+.env
+.vscode
+.idea
+*.md
+!README.md
+.git
+.sisyphus
+playwright-report
+test-results

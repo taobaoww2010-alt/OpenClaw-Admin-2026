@@ -1,6 +1,6 @@
 import { ref, computed } from "vue";
 import { defineStore } from "pinia";
-import { useWebSocketStore } from "./websocket";
+import { useConnectionStore } from "./connection";
 import { useSessionStore } from "./session";
 import type {
   AgentInfo,
@@ -23,12 +23,12 @@ export const useAgentStore = defineStore("agent", () => {
   const eventUnsubscribes: Array<() => void> = [];
   const AUTO_REFRESH_INTERVAL_MS = 10000; // 10 seconds
 
-  const wsStore = useWebSocketStore();
+  const connectionStore = useConnectionStore();
   const sessionStore = useSessionStore();
 
-  const methodUnknown = computed(() => wsStore.gatewayMethods.length === 0);
+  const methodUnknown = computed(() => connectionStore.openclaw.methods.length === 0);
   const supportsAgents = computed(
-    () => methodUnknown.value || wsStore.supportsAnyMethod(["agents.list"]),
+    () => methodUnknown.value || connectionStore.supportsAnyMethod(["agents.list"]),
   );
 
   const agentStats = computed(() => {
@@ -104,7 +104,7 @@ export const useAgentStore = defineStore("agent", () => {
     loading.value = true;
     error.value = "";
     try {
-      const result = await wsStore.rpc.listAgents();
+      const result = await connectionStore.getRpc()!.listAgents();
       const baseAgents = result.agents || [];
       agents.value = await mergeRuntimeSessionAgents(baseAgents);
       defaultAgentId.value = result.defaultId || "main";
@@ -119,7 +119,7 @@ export const useAgentStore = defineStore("agent", () => {
 
   async function fetchModels() {
     try {
-      models.value = await wsStore.rpc.listModels();
+      models.value = await connectionStore.getRpc()!.listModels();
     } catch {
       models.value = [];
     }
@@ -134,7 +134,7 @@ export const useAgentStore = defineStore("agent", () => {
     const agentId = params.id;
     const agentName = params.name || params.id;
 
-    await wsStore.rpc.createAgent({
+    await connectionStore.getRpc()!.createAgent({
       name: agentId,
       workspace,
     });
@@ -148,7 +148,7 @@ export const useAgentStore = defineStore("agent", () => {
 
       for (let i = 0; i < maxRetries; i++) {
         try {
-          await wsStore.rpc.updateAgent({
+          await connectionStore.getRpc()!.updateAgent({
             agentId: agentId,
             name: agentName,
           });
@@ -184,7 +184,7 @@ export const useAgentStore = defineStore("agent", () => {
       throw new Error("Cannot delete the main agent");
     }
 
-    await wsStore.rpc.deleteAgent(agentId);
+    await connectionStore.getRpc()!.deleteAgent(agentId);
     agents.value = agents.value.filter((a) => a.id !== agentId);
   }
 
@@ -205,7 +205,7 @@ export const useAgentStore = defineStore("agent", () => {
 
       for (let attempt = 0; attempt < maxNameRetries; attempt++) {
         try {
-          await wsStore.rpc.updateAgent({
+          await connectionStore.getRpc()!.updateAgent({
             agentId: params.agentId,
             name: params.name,
           });
@@ -234,7 +234,7 @@ export const useAgentStore = defineStore("agent", () => {
       }
     }
 
-    if (
+      if (
       params.theme !== undefined ||
       params.emoji !== undefined ||
       params.avatar !== undefined ||
@@ -246,7 +246,7 @@ export const useAgentStore = defineStore("agent", () => {
 
       for (let attempt = 0; attempt < maxRetries; attempt++) {
         try {
-          const config = await wsStore.rpc.getConfig();
+          const config = await connectionStore.getRpc()!.getConfig();
           const currentList: AgentInstance[] = Array.isArray(
             config.agents?.list,
           )
@@ -288,7 +288,7 @@ export const useAgentStore = defineStore("agent", () => {
             },
           };
 
-          await wsStore.rpc.setConfig(newConfig);
+          await connectionStore.getRpc()!.setConfig(newConfig);
           lastError = null;
           break;
         } catch (e: any) {
@@ -346,7 +346,7 @@ export const useAgentStore = defineStore("agent", () => {
 
         for (let attempt = 0; attempt < maxNameRetries; attempt++) {
           try {
-            await wsStore.rpc.updateAgent({
+            await connectionStore.getRpc()!.updateAgent({
               agentId: params.agentId,
               name: params.name,
             });
@@ -391,7 +391,7 @@ export const useAgentStore = defineStore("agent", () => {
 
       for (let attempt = 0; attempt < maxRetries; attempt++) {
         try {
-          const config = await wsStore.rpc.getConfig();
+          const config = await connectionStore.getRpc()!.getConfig();
           const currentList: AgentInstance[] = Array.isArray(
             config.agents?.list,
           )
@@ -444,7 +444,7 @@ export const useAgentStore = defineStore("agent", () => {
             },
           };
 
-          await wsStore.rpc.setConfig(newConfig);
+          await connectionStore.getRpc()!.setConfig(newConfig);
           lastError = null;
           break;
         } catch (e: any) {
@@ -481,7 +481,7 @@ export const useAgentStore = defineStore("agent", () => {
   }
 
   async function setAgentModel(params: { agentId: string; model?: string | null }) {
-    await wsStore.rpc.updateAgent({
+    await connectionStore.getRpc()!.updateAgent({
       agentId: params.agentId,
       model: params.model === null ? "" : params.model,
     });
@@ -493,7 +493,7 @@ export const useAgentStore = defineStore("agent", () => {
     allow?: string[];
     deny?: string[];
   }) {
-    const config = await wsStore.rpc.getConfig();
+    const config = await connectionStore.getRpc()!.getConfig();
     const currentList: AgentInstance[] = Array.isArray(config.agents?.list)
       ? [...config.agents.list]
       : [];
@@ -527,7 +527,7 @@ export const useAgentStore = defineStore("agent", () => {
       },
     };
 
-    await wsStore.rpc.setConfig(newConfig);
+    await connectionStore.getRpc()!.setConfig(newConfig);
     await fetchAgents();
   }
 
@@ -594,7 +594,7 @@ export const useAgentStore = defineStore("agent", () => {
 
     // Listen for agent creation events (if supported by Gateway)
     eventUnsubscribes.push(
-      wsStore.subscribe("agent.created", (agentId: unknown) => {
+      connectionStore.subscribeWs("agent.created", (agentId: unknown) => {
         console.log("[AgentStore] Agent created event:", agentId);
         fetchAgents().catch((e) => {
           console.warn(
@@ -607,7 +607,7 @@ export const useAgentStore = defineStore("agent", () => {
 
     // Listen for agent deletion events (if supported by Gateway)
     eventUnsubscribes.push(
-      wsStore.subscribe("agent.deleted", (agentId: unknown) => {
+      connectionStore.subscribeWs("agent.deleted", (agentId: unknown) => {
         console.log("[AgentStore] Agent deleted event:", agentId);
         fetchAgents().catch((e) => {
           console.warn(
@@ -620,7 +620,7 @@ export const useAgentStore = defineStore("agent", () => {
 
     // As a fallback, also listen for generic agent update events
     eventUnsubscribes.push(
-      wsStore.subscribe("agents.updated", () => {
+      connectionStore.subscribeWs("agents.updated", () => {
         console.log("[AgentStore] Agents updated event received");
         fetchAgents().catch((e) => {
           console.warn(

@@ -54,7 +54,7 @@ import {
   type AgentBinding,
 } from '@/stores/wizard'
 import { useAgentStore } from '@/stores/agent'
-import { useWebSocketStore } from '@/stores/websocket'
+import { useConnectionStore } from '@/stores/connection'
 import { useSessionStore } from '@/stores/session'
 import { useConfigStore } from '@/stores/config'
 import { formatRelativeTime } from '@/utils/format'
@@ -69,7 +69,7 @@ const message = useMessage()
 const wizardStore = useWizardStore()
 const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
-const wsStore = useWebSocketStore()
+const connectionStore = useConnectionStore()
 const configStore = useConfigStore()
 
 const selectedTeamId = ref<string | null>(null)
@@ -450,7 +450,7 @@ async function handleConfirmDeleteTeam() {
       for (let attempt = 1; attempt <= maxRetries && !deleted; attempt++) {
         try {
           console.log(`[TeamDelete] 调用 deleteAgent API, agentId: ${agentIdToDelete}, 尝试 ${attempt}/${maxRetries}`)
-          await wsStore.rpc.deleteAgent(agentIdToDelete)
+          await connectionStore.getRpc()!.deleteAgent(agentIdToDelete)
           
           console.log(`[TeamDelete] API 调用成功，等待 ${verifyDelay}ms 后验证...`)
           await new Promise(resolve => setTimeout(resolve, verifyDelay))

@@ -1,11 +1,27 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { routes } from './routes'
 import { useAuthStore } from '@/stores/auth'
+import { useConnectionStore } from '@/stores/connection'
 
 const router = createRouter({
   history: createWebHistory(),
   routes,
 })
+
+async function checkSetupStatus(): Promise<boolean> {
+  try {
+    const authStore = useAuthStore()
+    const token = authStore.getToken()
+    const res = await fetch('/api/setup/status', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    })
+    if (!res.ok) return false
+    const data = await res.json()
+    return data.ok ? !!data.setupCompleted : false
+  } catch {
+    return false
+  }
+}
 
 router.beforeEach(async (to, _from, next) => {
   const authStore = useAuthStore()
@@ -15,7 +31,6 @@ router.beforeEach(async (to, _from, next) => {
     authEnabled = await authStore.checkAuthConfig()
   } catch (error) {
     console.error('[Router] checkAuthConfig failed:', error)
-    // 认证配置检查失败时，假设认证已禁用，允许访问
     authEnabled = false
   }
 
@@ -60,6 +75,16 @@ router.beforeEach(async (to, _from, next) => {
     console.error('[Router] checkAuth failed:', error)
     next({ name: 'Login', query: { redirect: to.fullPath } })
     return
+  }
+
+  // Check if setup is completed, redirect to Settings if not
+  if (to.name !== 'Settings' && to.name !== 'Login') {
+    const setupCompleted = await checkSetupStatus()
+    console.log('[Router] Setup check:', { setupCompleted, redirectTo: to.name })
+    if (!setupCompleted) {
+      next({ name: 'Settings' })
+      return
+    }
   }
 
   next()

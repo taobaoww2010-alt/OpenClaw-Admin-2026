@@ -12,8 +12,16 @@ import multer from 'multer'
 import checkDiskSpace from 'check-disk-space'
 import { execSync } from 'child_process'
 import pty from 'node-pty'
-import db, { createBackupRecord, updateBackupRecord, getBackupRecord, getBackupRecords, getBackupRecordsCount, deleteBackupRecord } from './database.js'
+import db, { createBackupRecord, updateBackupRecord, getBackupRecord, getBackupRecords, getBackupRecordsCount, deleteBackupRecord, createCustomer, getCustomer, getCustomerByTenantId, getCustomers, getCustomersCount, updateCustomer, deleteCustomer, checkLicenseStatus } from './database.js'
 import hermesProxyRouter, { initHermesConfig, setAuthMiddleware } from './hermes-proxy.js'
+import * as bossApi from './boss-api.js'
+import * as bossDispatch from './boss-dispatch.js'
+import * as bossMonitor from './boss-monitor.js'
+import * as bossAlertPush from './boss-alert-push.js'
+import * as bossReportGen from './boss-report-gen.js'
+import * as bossHermesBridge from './boss-hermes-bridge.js'
+import * as bossExecBridge from './boss-execution-bridge.js'
+import * as companyApi from './company-api.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -84,7 +92,524 @@ app.use(express.json())
 initHermesConfig(envConfig)
 app.use(hermesProxyRouter)
 
+// Boss Dashboard API 路由
+app.get('/api/boss/stats', authMiddleware, bossApi.getDashboardStats)
+app.get('/api/boss/agents', authMiddleware, bossApi.getAgents)
+app.get('/api/boss/agents/:id', authMiddleware, bossApi.getAgentById)
+app.post('/api/boss/agents', authMiddleware, bossApi.createAgent)
+app.put('/api/boss/agents/:id', authMiddleware, bossApi.updateAgent)
+app.delete('/api/boss/agents/:id', authMiddleware, bossApi.deleteAgent)
+app.get('/api/boss/tasks', authMiddleware, bossApi.getTasks)
+app.get('/api/boss/tasks/board', authMiddleware, bossApi.getTaskBoard)
+app.post('/api/boss/tasks', authMiddleware, bossApi.createTask)
+app.put('/api/boss/tasks/:id', authMiddleware, bossApi.updateTask)
+app.delete('/api/boss/tasks/:id', authMiddleware, bossApi.deleteTask)
+app.get('/api/boss/alerts', authMiddleware, bossApi.getAlerts)
+app.post('/api/boss/alerts', authMiddleware, bossApi.createAlert)
+app.put('/api/boss/alerts/:id/resolve', authMiddleware, bossApi.resolveAlert)
+app.delete('/api/boss/alerts/:id', authMiddleware, bossApi.deleteAlert)
+app.get('/api/boss/reports', authMiddleware, bossApi.getReports)
+app.get('/api/boss/reports/:date', authMiddleware, bossApi.getReportByDate)
+app.post('/api/boss/reports', authMiddleware, bossApi.createReport)
+app.delete('/api/boss/reports/:id', authMiddleware, bossApi.deleteReport)
+
+// Setup API - check and complete initial system setup
+app.get('/api/setup/status', authMiddleware, (req, res) => {
+  try {
+    let config = db.prepare('SELECT * FROM setup_config WHERE id = ?').get('default')
+    if (!config) {
+      db.prepare('INSERT INTO setup_config (id) VALUES (?)').run('default')
+      config = db.prepare('SELECT * FROM setup_config WHERE id = ?').get('default')
+    }
+    res.json({
+      ok: true,
+      setupCompleted: !!config.setup_completed,
+      companyName: config.company_name || '',
+      companyDescription: config.company_description || '',
+      modelConfigured: !!(config.model_url && config.model_name),
+      hermesConfigured: !!(config.hermes_web_url && config.hermes_api_url),
+      openclawConfigured: !!(config.openclaw_ws_url),
+      currentStep: getCurrentSetupStep(config),
+      // 原始字段（供管理后台读取）
+      licenseKey: config.license_key || '',
+      licenseActivated: !!config.license_activated,
+      licenseExpiry: config.license_expiry || '',
+      modelUrl: config.model_url || '',
+      modelApiKey: config.model_api_key || '',
+      modelName: config.model_name || '',
+      hermesWebUrl: config.hermes_web_url || '',
+      hermesApiUrl: config.hermes_api_url || '',
+      hermesApiKey: config.hermes_api_key || '',
+      openclawWsUrl: config.openclaw_ws_url || '',
+      openclawAuthToken: config.openclaw_auth_token || '',
+      openclawAuthPassword: config.openclaw_auth_password || '',
+    })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message })
+  }
+})
+
+function getCurrentSetupStep(config) {
+  if (!config.company_name) return 1
+  if (!(config.model_url && config.model_name)) return 2
+  if (!(config.hermes_web_url && config.hermes_api_url)) return 3
+  if (!config.openclaw_ws_url) return 4
+  return 5
+}
+
+app.post('/api/setup/save-company', authMiddleware, (req, res) => {
+  try {
+    const { company_name, company_description } = req.body
+    if (!company_name || !company_name.trim()) {
+      return res.status(400).json({ ok: false, error: '公司名称不能为空' })
+    }
+    const now = Date.now()
+    db.prepare(`
+      UPDATE setup_config 
+      SET company_name = ?, company_description = ?, updated_at = ?
+      WHERE id = ?
+    `).run(company_name.trim(), company_description || '', now, 'default')
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message })
+  }
+})
+
+app.post('/api/setup/test-model', authMiddleware, async (req, res) => {
+  try {
+    const { model_url, model_api_key, model_name } = req.body
+    if (!model_url || !model_name) {
+      return res.status(400).json({ ok: false, error: '模型地址和名称不能为空' })
+    }
+    const testUrl = model_url.replace(/\/+$/, '') + '/chat/completions'
+    const response = await fetch(testUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${model_api_key || ''}`,
+      },
+      body: JSON.stringify({
+        model: model_name,
+        messages: [{ role: 'user', content: 'Hi' }],
+        max_tokens: 5,
+      }),
+    })
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '')
+      return res.json({ ok: false, error: `连接失败 (${response.status}): ${errText.slice(0, 200)}` })
+    }
+    res.json({ ok: true, message: '连接成功！' })
+  } catch (err) {
+    res.json({ ok: false, error: `无法连接到模型服务: ${err.message}` })
+  }
+})
+
+app.post('/api/setup/save-model', authMiddleware, (req, res) => {
+  try {
+    const { model_url, model_api_key, model_name } = req.body
+    if (!model_url || !model_name) {
+      return res.status(400).json({ ok: false, error: '模型地址和名称不能为空' })
+    }
+    const now = Date.now()
+    db.prepare(`
+      UPDATE setup_config 
+      SET model_url = ?, model_api_key = ?, model_name = ?, updated_at = ?
+      WHERE id = ?
+    `).run(model_url.trim(), model_api_key || '', model_name.trim(), now, 'default')
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message })
+  }
+})
+
+app.post('/api/setup/test-hermes', authMiddleware, async (req, res) => {
+  try {
+    const { web_url, api_url, api_key } = req.body
+    if (!web_url || !api_url) {
+      return res.status(400).json({ ok: false, error: 'Web 地址和 API 地址不能为空' })
+    }
+    const results = { web: false, api: false }
+    try {
+      const webRes = await fetch(web_url.replace(/\/+$/, '') + '/api/status', {
+        headers: api_key ? { 'Authorization': `Bearer ${api_key}` } : {},
+        signal: AbortSignal.timeout(5000),
+      })
+      results.web = webRes.ok
+    } catch {}
+    try {
+      const apiRes = await fetch(api_url.replace(/\/+$/, '') + '/health', {
+        headers: api_key ? { 'x-api-key': api_key } : {},
+        signal: AbortSignal.timeout(5000),
+      })
+      results.api = apiRes.ok
+    } catch {}
+    if (results.web || results.api) {
+      res.json({ ok: true, message: `Web: ${results.web ? '✅' : '❌'} | API: ${results.api ? '✅' : '❌'}` })
+    } else {
+      res.json({ ok: false, error: '无法连接到 Hermes 服务' })
+    }
+  } catch (err) {
+    res.json({ ok: false, error: `连接失败: ${err.message}` })
+  }
+})
+
+app.post('/api/setup/save-hermes', authMiddleware, (req, res) => {
+  try {
+    const { web_url, api_url, api_key } = req.body
+    if (!web_url || !api_url) {
+      return res.status(400).json({ ok: false, error: 'Web 地址和 API 地址不能为空' })
+    }
+    const now = Date.now()
+    db.prepare(`
+      UPDATE setup_config 
+      SET hermes_web_url = ?, hermes_api_url = ?, hermes_api_key = ?, updated_at = ?
+      WHERE id = ?
+    `).run(web_url.trim(), api_url.trim(), api_key || '', now, 'default')
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message })
+  }
+})
+
+app.post('/api/setup/test-openclaw', authMiddleware, async (req, res) => {
+  try {
+    const { ws_url, auth_token, auth_password } = req.body
+    if (!ws_url) {
+      return res.status(400).json({ ok: false, error: 'WebSocket 地址不能为空' })
+    }
+    const { WebSocket } = await import('ws')
+    const testUrl = ws_url.replace(/\/+$/, '').replace('ws://', 'http://').replace('wss://', 'https://')
+    try {
+      const httpRes = await fetch(testUrl + '/health', {
+        headers: { 'Authorization': `Bearer ${auth_token || auth_password || ''}` },
+        signal: AbortSignal.timeout(5000),
+      })
+      if (httpRes.ok) {
+        return res.json({ ok: true, message: '连接成功！' })
+      }
+    } catch {}
+    try {
+      const ws = new WebSocket(ws_url, {
+        headers: auth_token ? { 'Authorization': `Bearer ${auth_token}` } : {},
+        handshakeTimeout: 5000,
+      })
+      await new Promise((resolve, reject) => {
+        ws.on('open', () => { ws.close(); resolve(true) })
+        ws.on('error', reject)
+      })
+      res.json({ ok: true, message: 'WebSocket 连接成功！' })
+    } catch {
+      res.json({ ok: false, error: '无法连接到 OpenClaw Gateway' })
+    }
+  } catch (err) {
+    res.json({ ok: false, error: `连接失败: ${err.message}` })
+  }
+})
+
+app.post('/api/setup/save-openclaw', authMiddleware, (req, res) => {
+  try {
+    const { ws_url, auth_token, auth_password } = req.body
+    if (!ws_url) {
+      return res.status(400).json({ ok: false, error: 'WebSocket 地址不能为空' })
+    }
+    const now = Date.now()
+    db.prepare(`
+      UPDATE setup_config 
+      SET openclaw_ws_url = ?, openclaw_auth_token = ?, openclaw_auth_password = ?, updated_at = ?
+      WHERE id = ?
+    `).run(ws_url.trim(), auth_token || '', auth_password || '', now, 'default')
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message })
+  }
+})
+
+app.post('/api/setup/create-agent', authMiddleware, (req, res) => {
+  try {
+    const { name, role, model, provider, description } = req.body
+    if (!name || !role) {
+      return res.status(400).json({ ok: false, error: '名称和角色不能为空' })
+    }
+    const id = randomUUID()
+    const now = Date.now()
+    db.prepare(`
+      INSERT INTO boss_agents (id, name, role, model, provider, status, description, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)
+    `).run(id, name.trim(), role.trim(), model || '', provider || '', description || '', now, now)
+    res.json({ ok: true, id })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message })
+  }
+})
+
+app.post('/api/setup/complete-all', authMiddleware, (req, res) => {
+  try {
+    const now = Date.now()
+    db.prepare(`
+      UPDATE setup_config 
+      SET setup_completed = 1, setup_completed_at = ?, updated_at = ?
+      WHERE id = ?
+    `).run(now, now, 'default')
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message })
+  }
+})
+
+// Boss Dispatch API
+app.post('/api/boss/dispatch', authMiddleware, bossDispatch.dispatchCommand)
+app.post('/api/boss/dispatch/:dispatchId/confirm', authMiddleware, bossDispatch.confirmDispatch)
+app.get('/api/boss/dispatch/:dispatchId', authMiddleware, bossDispatch.getDispatch)
+
+// Boss Execution API
+app.get('/api/boss/execution/tasks', authMiddleware, (req, res) => {
+  res.json({ ok: true, tasks: bossExecBridge.getExecutingTasks() })
+})
+app.get('/api/boss/execution/tasks/:taskId', authMiddleware, (req, res) => {
+  const status = bossExecBridge.getTaskExecutionStatus(req.params.taskId)
+  if (!status) return res.status(404).json({ ok: false, error: 'Task not executing' })
+  res.json({ ok: true, status })
+})
+app.post('/api/boss/tasks/:taskId/execute', authMiddleware, async (req, res) => {
+  try {
+    const task = db.prepare('SELECT * FROM boss_tasks WHERE id = ?').get(req.params.taskId)
+    if (!task) return res.status(404).json({ ok: false, error: 'Task not found' })
+    const result = await bossExecBridge.executeTask(req.params.taskId, task)
+    res.json({ ok: true, ...result })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message })
+  }
+})
+
+// Company Ops API (Phase 2.1)
+app.get('/api/company/config', authMiddleware, companyApi.getCompanyConfigHandler)
+app.put('/api/company/config', authMiddleware, companyApi.updateCompanyConfigHandler)
+app.post('/api/company/metrics', authMiddleware, companyApi.addMetricHandler)
+app.post('/api/company/metrics/batch', authMiddleware, companyApi.batchAddMetricsHandler)
+app.get('/api/company/metrics', authMiddleware, companyApi.getMetricsHandler)
+app.delete('/api/company/metrics', authMiddleware, companyApi.deleteMetricsHandler)
+app.get('/api/company/health', authMiddleware, companyApi.getHealthScoreHandler)
+app.get('/api/company/metrics/summary', authMiddleware, companyApi.getMetricsSummaryHandler)
+app.get('/api/company/metrics/trend', authMiddleware, companyApi.getMetricsTrendHandler)
+app.post('/api/company/metrics/seed', authMiddleware, companyApi.seedMetricsHandler)
+
+// License Management API
+app.post('/api/license/activate', authMiddleware, (req, res) => {
+  try {
+    const { activationCode } = req.body
+    // 模拟激活逻辑：实际场景应连接总后台验证
+    // 这里为了演示，只要输入了激活码且长度为16位以上就允许激活
+    if (!activationCode || activationCode.length < 16) {
+      return res.status(400).json({ ok: false, error: '无效的激活码' })
+    }
+    
+    // 设置1年有效期
+    const expiryDate = new Date()
+    expiryDate.setFullYear(expiryDate.getFullYear() + 1)
+    
+    db.prepare(`
+      UPDATE setup_config 
+      SET license_activated = 1, license_expiry = ?
+      WHERE id = ?
+    `).run(expiryDate.toISOString(), 'default')
+    
+    res.json({ ok: true, message: '激活成功', expiry: expiryDate.toISOString() })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message })
+  }
+})
+
+app.post('/api/license/deactivate', authMiddleware, (req, res) => {
+  try {
+    db.prepare('UPDATE setup_config SET license_activated = 0, license_expiry = NULL WHERE id = ?').run('default')
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message })
+  }
+})
+
+// Customer Management API
+app.get('/api/customers', authMiddleware, (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1
+    const pageSize = parseInt(req.query.pageSize) || 20
+    const search = req.query.search || ''
+    const offset = (page - 1) * pageSize
+    
+    const customers = getCustomers(pageSize, offset, search)
+    const total = getCustomersCount(search)
+    
+    res.json({
+      ok: true,
+      data: customers,
+      pagination: {
+        page,
+        pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize)
+      }
+    })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message })
+  }
+})
+
+app.get('/api/customers/:id', authMiddleware, (req, res) => {
+  try {
+    const customer = getCustomer(req.params.id)
+    if (!customer) return res.status(404).json({ ok: false, error: '客户不存在' })
+    res.json({ ok: true, data: customer })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message })
+  }
+})
+
+app.post('/api/customers', authMiddleware, (req, res) => {
+  try {
+    const { company_name, contact_name, contact_email, contact_phone, max_users, notes } = req.body
+    if (!company_name || !company_name.trim()) {
+      return res.status(400).json({ ok: false, error: '公司名称不能为空' })
+    }
+    
+    const id = createCustomer({
+      company_name: company_name.trim(),
+      contact_name,
+      contact_email,
+      contact_phone,
+      max_users: max_users || 10,
+      notes,
+    })
+    
+    const customer = getCustomer(id)
+    res.json({ ok: true, data: customer, message: '客户创建成功' })
+  } catch (err) {
+    if (err.message.includes('UNIQUE constraint failed')) {
+      return res.status(409).json({ ok: false, error: '租户ID已存在' })
+    }
+    res.status(500).json({ ok: false, error: err.message })
+  }
+})
+
+app.put('/api/customers/:id', authMiddleware, (req, res) => {
+  try {
+    const customer = getCustomer(req.params.id)
+    if (!customer) return res.status(404).json({ ok: false, error: '客户不存在' })
+    
+    const { company_name, contact_name, contact_email, contact_phone, max_users, notes, status, config } = req.body
+    const updates = {}
+    if (company_name !== undefined) updates.company_name = company_name
+    if (contact_name !== undefined) updates.contact_name = contact_name
+    if (contact_email !== undefined) updates.contact_email = contact_email
+    if (contact_phone !== undefined) updates.contact_phone = contact_phone
+    if (max_users !== undefined) updates.max_users = max_users
+    if (notes !== undefined) updates.notes = notes
+    if (status !== undefined) updates.status = status
+    if (config !== undefined) updates.config = config
+    
+    updateCustomer(req.params.id, updates)
+    const updatedCustomer = getCustomer(req.params.id)
+    res.json({ ok: true, data: updatedCustomer, message: '客户信息已更新' })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message })
+  }
+})
+
+app.delete('/api/customers/:id', authMiddleware, (req, res) => {
+  try {
+    const customer = getCustomer(req.params.id)
+    if (!customer) return res.status(404).json({ ok: false, error: '客户不存在' })
+    deleteCustomer(req.params.id)
+    res.json({ ok: true, message: '客户已删除' })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message })
+  }
+})
+
+app.post('/api/customers/:id/activate', authMiddleware, (req, res) => {
+  try {
+    const customer = getCustomer(req.params.id)
+    if (!customer) return res.status(404).json({ ok: false, error: '客户不存在' })
+    
+    const { activationCode, expiryDays } = req.body
+    if (!activationCode || activationCode.length < 16) {
+      return res.status(400).json({ ok: false, error: '无效的激活码' })
+    }
+    
+    const days = expiryDays || 365
+    const expiryDate = new Date()
+    expiryDate.setDate(expiryDate.getDate() + days)
+    
+    updateCustomer(req.params.id, {
+      license_activated: 1,
+      license_expiry: expiryDate.toISOString(),
+    })
+    
+    res.json({ ok: true, message: '激活成功', expiry: expiryDate.toISOString() })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message })
+  }
+})
+
+app.post('/api/customers/:id/deactivate', authMiddleware, (req, res) => {
+  try {
+    const customer = getCustomer(req.params.id)
+    if (!customer) return res.status(404).json({ ok: false, error: '客户不存在' })
+    updateCustomer(req.params.id, { license_activated: 0, license_expiry: null })
+    res.json({ ok: true, message: '已取消激活' })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message })
+  }
+})
+
+app.get('/api/customers/:id/config', authMiddleware, (req, res) => {
+  try {
+    const customer = getCustomer(req.params.id)
+    if (!customer) return res.status(404).json({ ok: false, error: '客户不存在' })
+    res.json({ ok: true, data: customer.config || {} })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message })
+  }
+})
+
+app.put('/api/customers/:id/config', authMiddleware, (req, res) => {
+  try {
+    const customer = getCustomer(req.params.id)
+    if (!customer) return res.status(404).json({ ok: false, error: '客户不存在' })
+    updateCustomer(req.params.id, { config: req.body })
+    res.json({ ok: true, message: '配置已保存' })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message })
+  }
+})
+
+app.post('/api/customers/check-license', authMiddleware, (req, res) => {
+  try {
+    const { tenantId } = req.body
+    if (!tenantId) return res.status(400).json({ ok: false, error: '租户ID不能为空' })
+    const result = checkLicenseStatus(tenantId)
+    res.json({ ok: result.valid, ...result })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message })
+  }
+})
+
+// Boss Monitor & Alert Push API
+app.get('/api/boss/monitor/rules', authMiddleware, bossMonitor.getMonitorRules)
+app.post('/api/boss/monitor/trigger', authMiddleware, bossMonitor.triggerMonitor)
+app.get('/api/boss/alerts/push/config', authMiddleware, bossAlertPush.getPushConfig)
+app.post('/api/boss/alerts/push/test', authMiddleware, bossAlertPush.testPush)
+
+// Boss Report Generation API
+app.post('/api/boss/reports/generate', authMiddleware, bossReportGen.generateReport)
+app.get('/api/boss/reports/config', authMiddleware, bossReportGen.getReportConfig)
+
+// Start the auto monitor
+bossMonitor.startMonitor()
+
 let gateway = new OpenClawGateway(envConfig.OPENCLAW_WS_URL, envConfig.OPENCLAW_AUTH_TOKEN, envConfig.OPENCLAW_AUTH_PASSWORD, envConfig.LOG_LEVEL)
+
+// 注入 Gateway 到执行桥接模块
+bossExecBridge.setGateway(gateway)
 
 const sseClients = new Map()
 
@@ -250,7 +775,16 @@ gateway.on('error', (err) => {
 })
 
 gateway.on('event', (event, payload) => {
+  if (event === 'chat') {
+    console.log('[Gateway] Chat event:', JSON.stringify({ runId: payload?.runId?.slice?.(0, 20), state: payload?.state, seq: payload?.seq }))
+  } else {
+    console.log('[Gateway] Event:', event, 'payload keys:', payload ? Object.keys(payload) : null)
+  }
   debug('Gateway event:', event, 'payload keys:', payload ? Object.keys(payload) : null)
+  
+  // 处理任务执行状态更新
+  bossExecBridge.handleTaskEvent(event, payload)
+  
   broadcastSSE({ type: 'event', event, payload })
 })
 
@@ -274,7 +808,7 @@ function broadcastSSE(data) {
 }
 
 function isAuthEnabled() {
-  return envConfig.AUTH_USERNAME && envConfig.AUTH_PASSWORD
+  return !!(envConfig.AUTH_USERNAME && envConfig.AUTH_PASSWORD)
 }
 
 function checkAuth(req) {
@@ -4042,6 +4576,22 @@ if (hasDist) {
 }
 
 server.listen(envConfig.PORT, () => {
+  // 初始化 License Key（首次启动时随机生成）
+  try {
+    const config = db.prepare('SELECT license_key FROM setup_config WHERE id = ?').get('default')
+    if (!config || !config.license_key) {
+      const licenseKey = 'DK-' + crypto.randomUUID().replace(/-/g, '').toUpperCase().slice(0, 20)
+      if (!config) {
+        db.prepare('INSERT INTO setup_config (id, license_key) VALUES (?, ?)').run('default', licenseKey)
+      } else {
+        db.prepare('UPDATE setup_config SET license_key = ? WHERE id = ?').run(licenseKey, 'default')
+      }
+      console.log(`[License] Generated new key: ${licenseKey}`)
+    }
+  } catch (err) {
+    console.error('[License] Failed to initialize:', err.message)
+  }
+
   console.log(`Server running on http://localhost:${envConfig.PORT}`)
   console.log(`OpenClaw Gateway: ${envConfig.OPENCLAW_WS_URL}`)
   if (isAuthEnabled()) {

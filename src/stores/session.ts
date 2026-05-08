@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
-import { useWebSocketStore } from './websocket'
+import { useConnectionStore } from './connection'
 import type { Session, SessionDetail, SessionExport } from '@/api/types'
 
 export const useSessionStore = defineStore('session', () => {
@@ -8,7 +8,11 @@ export const useSessionStore = defineStore('session', () => {
   const currentSession = ref<SessionDetail | null>(null)
   const loading = ref(false)
 
-  const wsStore = useWebSocketStore()
+  // Accessor for RPC through the central connection store
+  function getRpc() {
+    const connStore = useConnectionStore()
+    return connStore.getRpc()
+  }
 
   function parseUsageNumber(value: unknown): number | undefined {
     if (typeof value === 'number' && Number.isFinite(value)) {
@@ -127,7 +131,7 @@ export const useSessionStore = defineStore('session', () => {
   async function fetchSessions() {
     loading.value = true
     try {
-      const list = await wsStore.rpc.listSessions()
+      const list = await getRpc()!.listSessions()
       if (list.length === 0) {
         sessions.value = list
         return
@@ -141,7 +145,7 @@ export const useSessionStore = defineStore('session', () => {
       }
 
       try {
-        const usage = await wsStore.rpc.getSessionsUsage({
+        const usage = await getRpc()!.getSessionsUsage({
           limit: Math.max(200, list.length * 4),
         })
         sessions.value = mergeUsageIntoSessions(list, usage)
@@ -156,10 +160,10 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
-  async function fetchSession(key: string) {
+    async function fetchSession(key: string) {
     loading.value = true
     try {
-      currentSession.value = await wsStore.rpc.getSession(key)
+      currentSession.value = await getRpc()!.getSession(key)
     } catch (error) {
       currentSession.value = null
       console.error('[SessionStore] fetchSession failed:', error)
@@ -169,23 +173,23 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   async function resetSession(key: string) {
-    await wsStore.rpc.resetSession(key)
+    await getRpc()!.resetSession(key)
     await fetchSessions()
   }
 
   async function newSession(key: string) {
-    await wsStore.rpc.newSession(key)
+    await getRpc()!.newSession(key)
     await fetchSessions()
   }
 
   async function deleteSession(key: string) {
-    await wsStore.rpc.deleteSession(key)
+    await getRpc()!.deleteSession(key)
     sessions.value = sessions.value.filter((s) => s.key !== key)
   }
 
   async function deleteSessions(keys: string[]) {
     const results = await Promise.allSettled(
-      keys.map((key) => wsStore.rpc.deleteSession(key))
+      keys.map((key) => getRpc()!.deleteSession(key))
     )
     const deletedKeys = new Set<string>()
     results.forEach((result, index) => {
@@ -206,7 +210,7 @@ export const useSessionStore = defineStore('session', () => {
     label?: string
     thread?: boolean
   }): Promise<string> {
-    const result = await wsStore.rpc.spawnSession(params)
+    const result = await getRpc()!.spawnSession(params)
     return result.sessionKey
   }
 
@@ -222,7 +226,7 @@ export const useSessionStore = defineStore('session', () => {
     const sessionKey = `agent:${agentId}:${channel}:dm:${peer}`
     const idempotencyKey = `web-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 
-    await wsStore.rpc.sendChatMessage({
+    await getRpc()!.sendChatMessage({
       sessionKey,
       message: '/new',
       idempotencyKey,
@@ -230,7 +234,7 @@ export const useSessionStore = defineStore('session', () => {
 
     if (params.label) {
       await new Promise((resolve) => setTimeout(resolve, 1500))
-      await wsStore.rpc.patchSession({ sessionKey, label: params.label })
+      await getRpc()!.patchSession({ sessionKey, label: params.label })
     }
 
     await fetchSessions()
@@ -238,12 +242,12 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   async function patchSessionLabel(sessionKey: string, label: string): Promise<void> {
-    await wsStore.rpc.patchSession({ sessionKey, label })
+    await getRpc()!.patchSession({ sessionKey, label })
     await fetchSessions()
   }
 
   async function exportSession(key: string): Promise<SessionExport> {
-    return await wsStore.rpc.exportSession(key)
+    return await getRpc()!.exportSession(key)
   }
 
   return {

@@ -42,7 +42,7 @@ import {
   TrashOutline,
 } from '@vicons/ionicons5'
 import { useI18n } from 'vue-i18n'
-import { useWebSocketStore } from '@/stores/websocket'
+import { useConnectionStore } from '@/stores/connection'
 import { useSessionStore } from '@/stores/session'
 import { useOfficeStore } from '@/stores/office'
 import { useAgentStore } from '@/stores/agent'
@@ -59,7 +59,7 @@ import AgentChatPanel from '@/components/office/AgentChatPanel.vue'
 import ScenarioManagementPanel from '@/components/office/ScenarioManagementPanel.vue'
 
 const { t } = useI18n()
-const wsStore = useWebSocketStore()
+const connectionStore = useConnectionStore()
 const sessionStore = useSessionStore()
 const officeStore = useOfficeStore()
 const agentStore = useAgentStore()
@@ -90,9 +90,9 @@ const selectedAgentSessions = computed(() => {
     .sort((a, b) => new Date(b.lastActivity).getTime() - new Date(a.lastActivity).getTime())
 })
 
-const methodUnknown = computed(() => wsStore.gatewayMethods.length === 0)
+const methodUnknown = computed(() => connectionStore.openclaw.methods.length === 0)
 const supportsAgents = computed(() =>
-  methodUnknown.value || wsStore.supportsAnyMethod(['agents.list'])
+  methodUnknown.value || connectionStore.supportsAnyMethod(['agents.list'])
 )
 
 const showCreateModal = ref(false)

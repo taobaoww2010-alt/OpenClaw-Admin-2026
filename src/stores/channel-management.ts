@@ -9,7 +9,7 @@ import type {
   PluginPackage,
 } from '@/api/types'
 import { ConnectionState } from '@/api/types'
-import { useWebSocketStore } from './websocket'
+import { useConnectionStore } from './connection'
 import {
   buildChannelPatches,
   cloneChannelConfigs,
@@ -83,7 +83,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 export const useChannelManagementStore = defineStore('channel-management', () => {
-  const wsStore = useWebSocketStore()
+  const connectionStore = useConnectionStore()
 
   const loading = ref(false)
   const saving = ref(false)
@@ -236,7 +236,7 @@ export const useChannelManagementStore = defineStore('channel-management', () =>
   }
 
   async function refreshRuntimeChannels(): Promise<void> {
-    runtimeChannels.value = await wsStore.rpc.listChannels()
+    runtimeChannels.value = await connectionStore.getRpc()!.listChannels()
     syncPluginInstalledMap()
   }
 
@@ -245,8 +245,8 @@ export const useChannelManagementStore = defineStore('channel-management', () =>
     lastError.value = null
     try {
       const [runtime, config] = await Promise.all([
-        wsStore.rpc.listChannels(),
-        wsStore.rpc.getConfig(),
+        connectionStore.getRpc()!.listChannels(),
+        connectionStore.getRpc()!.getConfig(),
       ])
       runtimeChannels.value = runtime
       resetDraftFromConfig(config)
@@ -330,8 +330,8 @@ export const useChannelManagementStore = defineStore('channel-management', () =>
   async function refreshPlugins(): Promise<void> {
     pluginLastError.value = null
 
-    const hasMethodSnapshot = wsStore.gatewayMethods.length > 0
-    if (hasMethodSnapshot && !wsStore.supportsAnyMethod(PLUGIN_LIST_METHODS)) {
+    const hasMethodSnapshot = connectionStore.openclaw.methods.length > 0
+    if (hasMethodSnapshot && !connectionStore.supportsAnyMethod(PLUGIN_LIST_METHODS)) {
       plugins.value = []
       pluginRpcSupported.value = false
       syncPluginInstalledMap()
@@ -339,7 +339,7 @@ export const useChannelManagementStore = defineStore('channel-management', () =>
     }
 
     try {
-      const list = await wsStore.rpc.listPlugins()
+      const list = await connectionStore.getRpc()!.listPlugins()
       plugins.value = list
       pluginRpcSupported.value = true
     } catch (error) {
@@ -373,7 +373,7 @@ export const useChannelManagementStore = defineStore('channel-management', () =>
     let lastInstallError: unknown
     for (const pluginName of pluginNames) {
       try {
-        await wsStore.rpc.installPlugin(pluginName)
+      await connectionStore.getRpc()!.installPlugin(pluginName)
         await refreshPlugins()
         return pluginName
       } catch (error) {
@@ -409,7 +409,7 @@ export const useChannelManagementStore = defineStore('channel-management', () =>
   async function waitForGatewayReconnect(timeoutMs = 35000): Promise<boolean> {
     const startedAt = Date.now()
     while (Date.now() - startedAt < timeoutMs) {
-      if (wsStore.state === ConnectionState.CONNECTED) {
+      if (connectionStore.openclaw.state === ConnectionState.CONNECTED) {
         return true
       }
       await sleep(500)
@@ -421,7 +421,7 @@ export const useChannelManagementStore = defineStore('channel-management', () =>
     applying.value = true
     lastError.value = null
     try {
-      await wsStore.rpc.applyConfig()
+      await connectionStore.getRpc()!.applyConfig()
     } catch (error) {
       // config.apply 可能触发连接重置，允许继续等待重连
       console.warn('[ChannelManagement] applyConfig request interrupted:', error)
@@ -448,8 +448,8 @@ export const useChannelManagementStore = defineStore('channel-management', () =>
         return []
       }
 
-      await wsStore.rpc.patchConfig(patches)
-      const latestConfig = await wsStore.rpc.getConfig()
+      await connectionStore.getRpc()!.patchConfig(patches)
+      const latestConfig = await connectionStore.getRpc()!.getConfig()
       resetDraftFromConfig(latestConfig)
       await refreshRuntimeChannels()
 
@@ -467,7 +467,7 @@ export const useChannelManagementStore = defineStore('channel-management', () =>
   }
 
   async function authChannel(channel: Channel): Promise<void> {
-    await wsStore.rpc.authChannel({
+    await connectionStore.getRpc()!.authChannel({
       channelId: channel.id,
       channelKey: deriveChannelKey(channel),
       accountId: deriveAccountId(channel),
@@ -476,7 +476,7 @@ export const useChannelManagementStore = defineStore('channel-management', () =>
   }
 
   async function pairChannel(channel: Channel, code: string): Promise<void> {
-    await wsStore.rpc.pairChannel({
+    await connectionStore.getRpc()!.pairChannel({
       channelId: channel.id,
       channelKey: deriveChannelKey(channel),
       accountId: deriveAccountId(channel),

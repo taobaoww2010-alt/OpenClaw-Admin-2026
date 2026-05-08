@@ -32,7 +32,8 @@ import {
   TrashOutline,
 } from '@vicons/ionicons5'
 import { useI18n } from 'vue-i18n'
-import { useWebSocketStore } from '@/stores/websocket'
+import { useConnectionStore } from '@/stores/connection'
+import { ConnectionState } from '@/api/types'
 import { formatDate, formatRelativeTime } from '@/utils/format'
 import type {
   DeviceNode,
@@ -74,7 +75,7 @@ const LOG_BUFFER_LIMIT = 2000
 
 const message = useMessage()
 const dialog = useDialog()
-const wsStore = useWebSocketStore()
+const connectionStore = useConnectionStore()
 const { t } = useI18n()
 
 const activeTab = ref<OpsTab>('presence')
@@ -134,17 +135,19 @@ let presenceTimer: ReturnType<typeof setInterval> | null = null
 let logsTimer: ReturnType<typeof setInterval> | null = null
 
 const connectionTagType = computed<'success' | 'warning' | 'error' | 'default'>(() => {
-  if (wsStore.state === 'connected') return 'success'
-  if (wsStore.state === 'connecting' || wsStore.state === 'reconnecting') return 'warning'
-  if (wsStore.state === 'failed') return 'error'
+  const st = connectionStore.openclaw.state
+  if (st === ConnectionState.CONNECTED) return 'success'
+  if (st === ConnectionState.CONNECTING || st === ConnectionState.RECONNECTING) return 'warning'
+  if (st === ConnectionState.FAILED) return 'error'
   return 'default'
 })
 
 const connectionLabel = computed(() => {
-  if (wsStore.state === 'connected') return t('pages.monitor.connection.connected')
-  if (wsStore.state === 'connecting') return t('pages.monitor.connection.connecting')
-  if (wsStore.state === 'reconnecting') return t('pages.monitor.connection.reconnecting')
-  if (wsStore.state === 'failed') return t('pages.monitor.connection.failed')
+  const st = connectionStore.openclaw.state
+  if (st === ConnectionState.CONNECTED) return t('pages.monitor.connection.connected')
+  if (st === ConnectionState.CONNECTING) return t('pages.monitor.connection.connecting')
+  if (st === ConnectionState.RECONNECTING) return t('pages.monitor.connection.reconnecting')
+  if (st === ConnectionState.FAILED) return t('pages.monitor.connection.failed')
   return t('pages.monitor.connection.disconnected')
 })
 
@@ -206,24 +209,24 @@ const statusHeartbeatEnabledCount = computed(() => {
   return agents.filter((agent) => agent.enabled).length
 })
 
-const methodUnknown = computed(() => wsStore.gatewayMethods.length === 0)
+const methodUnknown = computed(() => connectionStore.openclaw.methods.length === 0)
 const supportsPresence = computed(
-  () => methodUnknown.value || wsStore.supportsAnyMethod(['system-presence'])
+  () => methodUnknown.value || connectionStore.supportsAnyMethod(['system-presence'])
 )
-const supportsHealth = computed(() => methodUnknown.value || wsStore.supportsAnyMethod(['health']))
-const supportsStatus = computed(() => methodUnknown.value || wsStore.supportsAnyMethod(['status']))
+const supportsHealth = computed(() => methodUnknown.value || connectionStore.supportsAnyMethod(['health']))
+const supportsStatus = computed(() => methodUnknown.value || connectionStore.supportsAnyMethod(['status']))
 const supportsLogs = computed(
-  () => methodUnknown.value || wsStore.supportsAnyMethod(['logs.tail'])
+  () => methodUnknown.value || connectionStore.supportsAnyMethod(['logs.tail'])
 )
 const supportsExecApprovals = computed(() => {
   if (methodUnknown.value) return true
   if (approvalsTargetKind.value === 'node') {
-    return wsStore.supportsAnyMethod(['exec.approvals.node.get', 'exec.approvals.node.set'])
+    return connectionStore.supportsAnyMethod(['exec.approvals.node.get', 'exec.approvals.node.set'])
   }
-  return wsStore.supportsAnyMethod(['exec.approvals.get', 'exec.approvals.set'])
+  return connectionStore.supportsAnyMethod(['exec.approvals.get', 'exec.approvals.set'])
 })
 const supportsUpdate = computed(
-  () => methodUnknown.value || wsStore.supportsAnyMethod(['update.run'])
+  () => methodUnknown.value || connectionStore.supportsAnyMethod(['update.run'])
 )
 
 const logLevelOptions = computed(() => LOG_LEVEL_OPTIONS)
@@ -399,7 +402,7 @@ async function loadNodes() {
   if (nodesLoading.value) return
   nodesLoading.value = true
   try {
-    nodes.value = await wsStore.rpc.listNodes()
+    nodes.value = await connectionStore.getRpc()!.listNodes()
   } catch {
     nodes.value = []
   } finally {
@@ -419,10 +422,10 @@ async function loadHealthStatus(opts?: { probe?: boolean }) {
 
   if (!supportsHealth.value) {
     healthError.value = methodNotReadyLabel('health')
-  } else {
-    try {
-      healthSnapshot.value = await wsStore.rpc.getHealth({ probe: wantsProbe })
-      updated = true
+    } else {
+      try {
+        healthSnapshot.value = await connectionStore.getRpc()!.getHealth({ probe: wantsProbe })
+        updated = true
       if (wantsProbe) {
         diagLastProbeAt.value = Date.now()
       }
@@ -433,10 +436,10 @@ async function loadHealthStatus(opts?: { probe?: boolean }) {
 
   if (!supportsStatus.value) {
     statusError.value = methodNotReadyLabel('status')
-  } else {
-    try {
-      statusSnapshot.value = await wsStore.rpc.getStatus()
-      updated = true
+    } else {
+      try {
+        statusSnapshot.value = await connectionStore.getRpc()!.getStatus()
+        updated = true
     } catch (error) {
       statusError.value = asErrorMessage(error, t('pages.monitor.errors.statusFailed'))
     }
@@ -458,7 +461,7 @@ async function loadPresence(quiet = false) {
   if (!quiet) presenceLoading.value = true
   presenceError.value = ''
   try {
-    presenceEntries.value = await wsStore.rpc.getSystemPresence()
+    presenceEntries.value = await connectionStore.getRpc()!.getSystemPresence()
     presenceLastUpdatedAt.value = Date.now()
   } catch (error) {
     presenceError.value = asErrorMessage(error, t('pages.monitor.errors.presenceFailed'))
@@ -477,7 +480,7 @@ async function loadLogs(opts?: { reset?: boolean; quiet?: boolean }) {
   if (!opts?.quiet) logsLoading.value = true
   logsError.value = ''
   try {
-    const result = await wsStore.rpc.tailLogs({
+    const result = await connectionStore.getRpc()!.tailLogs({
       cursor: opts?.reset ? undefined : (logsCursor.value ?? undefined),
       limit: Math.max(1, Math.floor(logsLimit.value || 500)),
       maxBytes: Math.max(1, Math.floor(logsMaxBytes.value || 250000)),
@@ -552,7 +555,7 @@ async function loadApprovals() {
   approvalsLoading.value = true
   approvalsError.value = ''
   try {
-    const snapshot = await wsStore.rpc.getExecApprovals({
+    const snapshot = await connectionStore.getRpc()!.getExecApprovals({
       nodeId: approvalsTargetKind.value === 'node' ? approvalsTargetNodeId.value : undefined,
     })
     applyApprovalsSnapshot(snapshot)
@@ -577,7 +580,7 @@ async function saveApprovals() {
   approvalsError.value = ''
   try {
     const form = ensureApprovalsForm()
-    const snapshot = await wsStore.rpc.setExecApprovals({
+    const snapshot = await connectionStore.getRpc()!.setExecApprovals({
       file: cloneJson(form),
       baseHash: approvalsSnapshot.value.hash,
       nodeId: approvalsTargetKind.value === 'node' ? approvalsTargetNodeId.value : undefined,
@@ -697,7 +700,7 @@ async function runUpdate() {
   updateRunning.value = true
   updateError.value = ''
   try {
-    const response = await wsStore.rpc.runUpdate({
+    const response = await connectionStore.getRpc()!.runUpdate({
       sessionKey: updateSessionKey.value.trim() || undefined,
       note: updateNote.value.trim() || undefined,
       restartDelayMs: typeof updateRestartDelayMs.value === 'number' ? updateRestartDelayMs.value : undefined,
@@ -748,9 +751,9 @@ async function refreshOpsData() {
 }
 
 watch(
-  () => wsStore.state,
+  () => connectionStore.openclaw.state,
   (state) => {
-    if (state !== 'connected') return
+    if (state !== ConnectionState.CONNECTED) return
     if (activeTab.value === 'presence') {
       void loadHealthStatus()
       void loadPresence()

@@ -5,7 +5,7 @@ import { useOfficeStore } from '@/stores/office'
 import { useAgentStore } from '@/stores/agent'
 import { useSessionStore } from '@/stores/session'
 import { useChatStore } from '@/stores/chat'
-import { useWebSocketStore } from '@/stores/websocket'
+import { useConnectionStore } from '@/stores/connection'
 import { useResizable } from '@/composables/useResizable'
 import OfficeToolbar from '@/components/office/OfficeToolbar.vue'
 import AgentChatPanel from '@/components/office/AgentChatPanel.vue'
@@ -104,7 +104,7 @@ const officeStore = useOfficeStore()
 const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
 const chatStore = useChatStore()
-const wsStore = useWebSocketStore()
+const connectionStore = useConnectionStore()
 const message = useMessage()
 
 const eventCleanups: Array<() => void> = []
@@ -1541,7 +1541,7 @@ onMounted(async () => {
   }, 100)
   
   eventCleanups.push(
-    wsStore.subscribe('event', (evt: unknown) => {
+    connectionStore.subscribeWs('event', (evt: unknown) => {
       const data = evt as { event?: string; payload?: unknown }
       const eventName = data.event || ''
       if (eventName === 'chat' || eventName.startsWith('chat.') || eventName === 'agent' || eventName.startsWith('agent.')) {

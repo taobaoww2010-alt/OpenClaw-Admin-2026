@@ -4,14 +4,14 @@ import { useRouter, useRoute } from 'vue-router'
 import { NButton, NText, NAlert, NSpin, NInput, NFormItem, NForm } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
-import { useWebSocketStore } from '@/stores/websocket'
+import { useConnectionStore } from '@/stores/connection'
 import { ConnectionState } from '@/api/types'
 import AnimatedCharacters from '@/components/common/AnimatedCharacters.vue'
 
 const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
-const websocketStore = useWebSocketStore()
+const connectionStore = useConnectionStore()
 const { t } = useI18n()
 
 const loading = ref(true)
@@ -22,7 +22,7 @@ const password = ref('')
 const isTyping = ref(false)
 const showPassword = ref(false)
 
-const connectionState = computed(() => websocketStore.state)
+const connectionState = computed(() => connectionStore.openclaw.state)
 const isConnected = computed(() => connectionState.value === ConnectionState.CONNECTED)
 const isConnecting = computed(() => 
   connectionState.value === ConnectionState.CONNECTING || 
@@ -33,20 +33,20 @@ onMounted(async () => {
   const authEnabled = await authStore.checkAuthConfig()
   
   if (!authEnabled) {
-    websocketStore.connect()
+    connectionStore.connectOpenClaw()
     
     const checkConnection = () => {
       if (isConnected.value) {
         loading.value = false
         const redirect = (route.query.redirect as string) || '/'
         router.push(redirect)
-      } else if (websocketStore.lastError) {
+    } else if (connectionStore.openclaw.error) {
         loading.value = false
-        error.value = websocketStore.lastError
+        error.value = connectionStore.openclaw.error
       }
     }
 
-    const unsubscribe = websocketStore.subscribe('stateChange', () => {
+    const unsubscribe = connectionStore.subscribeWs('stateChange', () => {
       checkConnection()
     })
 
@@ -103,8 +103,8 @@ async function handleLogin() {
 function handleRetry() {
   error.value = ''
   loading.value = true
-  websocketStore.disconnect()
-  websocketStore.connect()
+  connectionStore.disconnectOpenClaw()
+  connectionStore.connectOpenClaw()
   
   const timer = setTimeout(() => {
     if (loading.value) {

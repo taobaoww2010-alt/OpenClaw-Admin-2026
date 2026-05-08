@@ -1,6 +1,6 @@
 import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
-import { useWebSocketStore } from './websocket'
+import { useConnectionStore } from './connection'
 import { useAgentStore } from './agent'
 import { useSessionStore } from './session'
 import { useChatStore } from './chat'
@@ -94,7 +94,7 @@ const AGENT_COLORS = [
 ]
 
 export const useOfficeStore = defineStore('office', () => {
-  const wsStore = useWebSocketStore()
+  const connectionStore = useConnectionStore()
   const agentStore = useAgentStore()
   const sessionStore = useSessionStore()
   const chatStore = useChatStore()
@@ -432,10 +432,10 @@ export const useOfficeStore = defineStore('office', () => {
         message: `正在向协调者 ${coordinatorId} 发送任务...`,
       })
 
-      console.log('[Office] wsStore.rpc:', wsStore.rpc)
-      console.log('[Office] wsStore.state:', wsStore.state)
+      console.log('[Office] connectionStore.getRpc():', connectionStore.getRpc())
+      // wsStore.state removed in migration to connectionStore
       
-      const result = await wsStore.rpc.callAgent({
+      const result = await connectionStore.getRpc()!.callAgent({
         sessionKey,
         message: taskMessage,
         idempotencyKey: `task-${taskId}-${Date.now()}`,
@@ -605,7 +605,7 @@ export const useOfficeStore = defineStore('office', () => {
   async function spawnAgentTask(agentId: string, task: string) {
     try {
       const sessionKey = `agent:${agentId}:main:dm:spawn-${Date.now()}`
-      const result = await wsStore.rpc.callAgent({
+      const result = await connectionStore.getRpc()!.callAgent({
         sessionKey,
         message: task,
         idempotencyKey: `spawn-${agentId}-${Date.now()}`,

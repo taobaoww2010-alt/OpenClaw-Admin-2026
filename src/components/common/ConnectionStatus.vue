@@ -3,7 +3,7 @@ import { computed, ref, onMounted } from 'vue'
 import { NTag, NSpace, NButton, NSelect, NPopover } from 'naive-ui'
 import { useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
-import { useWebSocketStore } from '@/stores/websocket'
+import { useConnectionStore } from '@/stores/connection'
 import { useHermesConnectionStore } from '@/stores/hermes/connection'
 import { ConnectionState } from '@/api/types'
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome'
@@ -11,7 +11,7 @@ import { faGithub } from '@fortawesome/free-brands-svg-icons'
 
 const message = useMessage()
 
-const wsStore = useWebSocketStore()
+const connectionStore = useConnectionStore()
 const hermesConnStore = useHermesConnectionStore()
 const { t } = useI18n()
 const isUpdating = ref(false)
@@ -32,7 +32,7 @@ const status = computed(() => {
     }
     return { label: t('components.connectionStatus.disconnected'), type: 'error' as const }
   }
-  switch (wsStore.state) {
+  switch (connectionStore.openclaw.state) {
     case ConnectionState.CONNECTED:
       return { label: t('components.connectionStatus.connected'), type: 'success' as const }
     case ConnectionState.CONNECTING:
@@ -49,8 +49,8 @@ const status = computed(() => {
 
 const hasUpdate = computed(() => {
   // 比较当前版本和从npm获取的最新版本
-  if (wsStore.gatewayVersion && latestVersion.value) {
-    return wsStore.gatewayVersion !== latestVersion.value
+  if (connectionStore.openclaw.version && latestVersion.value) {
+    return connectionStore.openclaw.version !== latestVersion.value
   }
   return false
 })
@@ -84,22 +84,22 @@ async function fetchNpmVersions() {
       selectedVersion.value = versions[0]
     } else {
       // 如果没有获取到版本列表，使用当前网关版本
-      if (wsStore.gatewayVersion) {
+      if (connectionStore.openclaw.version) {
         versionOptions.value = [
-          { label: wsStore.gatewayVersion, value: wsStore.gatewayVersion }
+          { label: connectionStore.openclaw.version, value: connectionStore.openclaw.version }
         ]
-        selectedVersion.value = wsStore.gatewayVersion
+        selectedVersion.value = connectionStore.openclaw.version
       }
     }
   } catch (error) {
     console.error('[ConnectionStatus] Failed to fetch npm versions:', error)
     message.warning(t('components.connectionStatus.fetchVersionsFailed'))
     // 即使获取失败，也不使用 Gateway 提供的版本信息，保持 latestVersion 为 null
-    if (wsStore.gatewayVersion) {
+    if (connectionStore.openclaw.version) {
       versionOptions.value = [
-        { label: wsStore.gatewayVersion, value: wsStore.gatewayVersion }
+        { label: connectionStore.openclaw.version, value: connectionStore.openclaw.version }
       ]
-      selectedVersion.value = wsStore.gatewayVersion
+      selectedVersion.value = connectionStore.openclaw.version
     }
   } finally {
     isLoadingVersions.value = false
@@ -108,7 +108,7 @@ async function fetchNpmVersions() {
 
 // 当连接状态或更新信息变化时，获取版本列表
 const updateVersionOptions = async () => {
-  if (wsStore.state === ConnectionState.CONNECTED) {
+  if (connectionStore.openclaw.state === ConnectionState.CONNECTED) {
     await fetchNpmVersions()
   }
 }
@@ -118,7 +118,7 @@ onMounted(async () => {
   await updateVersionOptions()
   
   // 监听WebSocket状态变化
-  const unsubscribe = wsStore.subscribe('connected', async () => {
+  const unsubscribe = connectionStore.subscribeWs('connected', async () => {
     await updateVersionOptions()
   })
   
@@ -178,15 +178,15 @@ function handleCustomUpdate() {
       <FontAwesomeIcon :icon="faGithub" style="font-size: 16px;" />
     </a>
     <NTag
-      v-if="wsStore.gatewayVersion"
+      v-if="connectionStore.openclaw.version"
       size="small"
       :bordered="false"
       round
     >
-      OpenClaw {{ wsStore.gatewayVersion }}
+      OpenClaw {{ connectionStore.openclaw.version }}
     </NTag>
     <NPopover 
-      v-if="hasUpdate && wsStore.state === ConnectionState.CONNECTED && displayLatestVersion"
+      v-if="hasUpdate && connectionStore.openclaw.state === ConnectionState.CONNECTED && displayLatestVersion"
       trigger="click" 
       placement="bottom" 
       :width="280"

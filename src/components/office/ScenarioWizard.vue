@@ -53,7 +53,7 @@ import {
 import { useI18n } from 'vue-i18n'
 import { useWizardStore, type WizardTask, type GeneratedAgent, type AgentBinding } from '@/stores/wizard'
 import { useOfficeStore } from '@/stores/office'
-import { useWebSocketStore } from '@/stores/websocket'
+import { useConnectionStore } from '@/stores/connection'
 import { useAgentStore } from '@/stores/agent'
 import { useConfigStore } from '@/stores/config'
 import { useMemoryStore } from '@/stores/memory'
@@ -63,7 +63,7 @@ const { t } = useI18n()
 const message = useMessage()
 const wizardStore = useWizardStore()
 const officeStore = useOfficeStore()
-const wsStore = useWebSocketStore()
+const connectionStore = useConnectionStore()
 const agentStore = useAgentStore()
 const configStore = useConfigStore()
 const memoryStore = useMemoryStore()
@@ -251,14 +251,14 @@ async function handleGenerateAgents() {
 
     console.log('[Wizard] Sending message to session:', sessionKey)
     
-    await wsStore.rpc.sendChatMessage({
+    await connectionStore.getRpc()!.sendChatMessage({
       sessionKey,
       message: userMessage,
       idempotencyKey,
     })
 
     try {
-      await wsStore.rpc.patchSession({
+      await connectionStore.getRpc()!.patchSession({
         sessionKey,
         label: 'AI自动创建智能体助手',
       })
@@ -277,8 +277,8 @@ async function handleGenerateAgents() {
       await new Promise(resolve => setTimeout(resolve, pollInterval))
       attempts++
       
-      try {
-        const history = await wsStore.rpc.listChatHistory(sessionKey)
+        try {
+          const history = await connectionStore.getRpc()!.listChatHistory(sessionKey)
         if (history && history.length > 0) {
           const lastMessage = history[history.length - 1]
           if (lastMessage && lastMessage.role === 'assistant' && lastMessage.content) {
@@ -1470,17 +1470,17 @@ async function executeCreateAgent(agentId: string) {
     workspace,
   })
   
-  if (agent.agentsMd) {
-    await wsStore.rpc.setAgentFile(agent.id, 'AGENTS.md', agent.agentsMd)
+    if (agent.agentsMd) {
+      await connectionStore.getRpc()!.setAgentFile(agent.id, 'AGENTS.md', agent.agentsMd)
   }
   if (agent.soulMd) {
-    await wsStore.rpc.setAgentFile(agent.id, 'SOUL.md', agent.soulMd)
+      await connectionStore.getRpc()!.setAgentFile(agent.id, 'SOUL.md', agent.soulMd)
   }
   if (agent.userMd) {
-    await wsStore.rpc.setAgentFile(agent.id, 'USER.md', agent.userMd)
+      await connectionStore.getRpc()!.setAgentFile(agent.id, 'USER.md', agent.userMd)
   }
   if (agent.identityMd) {
-    await wsStore.rpc.setAgentFile(agent.id, 'IDENTITY.md', agent.identityMd)
+      await connectionStore.getRpc()!.setAgentFile(agent.id, 'IDENTITY.md', agent.identityMd)
   }
   
   agent.created = true
@@ -1608,8 +1608,8 @@ async function executeTaskSend(taskSendId: string) {
   const sessionKey = `agent:${agentId}:main:dm:task-${Date.now()}`
   
   const taskMessage = `任务: ${task.title}\n\n描述: ${task.description}\n\n请开始执行此任务。`
-  
-  const result = await wsStore.rpc.callAgent({
+
+  const result = await connectionStore.getRpc()!.callAgent({
     sessionKey,
     message: taskMessage,
     idempotencyKey: `task-${taskId}-${Date.now()}`,

@@ -12,11 +12,11 @@ import {
 } from 'naive-ui'
 import { RefreshOutline, SearchOutline } from '@vicons/ionicons5'
 import { useI18n } from 'vue-i18n'
-import { useWebSocketStore } from '@/stores/websocket'
+import { useConnectionStore } from '@/stores/connection'
 import type { Tool } from '@/api/types'
 import { h } from 'vue'
 
-const wsStore = useWebSocketStore()
+const connectionStore = useConnectionStore()
 const { t } = useI18n()
 const tools = ref<Tool[]>([])
 const loading = ref(false)
@@ -78,7 +78,7 @@ const columns = computed(() => ([
 async function fetchTools() {
   loading.value = true
   try {
-    tools.value = await wsStore.rpc.listTools()
+    tools.value = await connectionStore.getRpc()!.listTools()
   } catch {
     tools.value = []
   } finally {

@@ -1,7 +1,7 @@
 import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 import { useAuthStore } from './auth'
-import { useWebSocketStore } from './websocket'
+import { useConnectionStore } from './connection'
 
 export interface WizardTask {
   id: string
@@ -134,8 +134,8 @@ async function apiRequest(method: string, path: string, body?: unknown) {
 }
 
 async function spawnSession(params: SpawnSessionParams): Promise<SpawnSessionResult> {
-  const wsStore = useWebSocketStore()
-  return wsStore.rpc.spawnSession({
+  const connectionStore = useConnectionStore()
+  return connectionStore.getRpc()!.spawnSession({
     agentId: params.agentId,
     label: params.label,
     mode: params.mode,
@@ -145,13 +145,13 @@ async function spawnSession(params: SpawnSessionParams): Promise<SpawnSessionRes
 }
 
 async function sendToSession(sessionKey: string, message: string): Promise<void> {
-  const wsStore = useWebSocketStore()
-  await wsStore.rpc.sendToSession(sessionKey, message)
+  const connectionStore = useConnectionStore()
+  await connectionStore.getRpc()!.sendToSession(sessionKey, message)
 }
 
 async function getSessionHistory(sessionKey: string, limit?: number): Promise<unknown[]> {
-  const wsStore = useWebSocketStore()
-  return wsStore.rpc.getSessionHistory(sessionKey, limit)
+  const connectionStore = useConnectionStore()
+  return connectionStore.getRpc()!.getSessionHistory(sessionKey, limit)
 }
 
 export const useWizardStore = defineStore('wizard', () => {
@@ -486,7 +486,7 @@ export const useWizardStore = defineStore('wizard', () => {
       return
     }
 
-    const wsStore = useWebSocketStore()
+    const connectionStore = useConnectionStore()
     const mode = params?.mode || (task.mode as ExecuteTaskParams['mode']) || 'run'
 
     await updateTaskStatus(taskId, 'in_progress')
@@ -544,7 +544,7 @@ export const useWizardStore = defineStore('wizard', () => {
     })
 
     try {
-      const result = await wsStore.rpc.callAgent({
+      const result = await connectionStore.getRpc()!.callAgent({
         sessionKey,
         message: taskMessage,
         idempotencyKey: `task-${taskId}-${Date.now()}`,

@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { useWebSocketStore } from './websocket'
+import { useConnectionStore } from './connection'
 import type { AgentFileEntry, AgentInfo, OpenClawConfig } from '@/api/types'
 import { byLocale, getActiveLocale } from '@/i18n/text'
 
@@ -97,7 +97,11 @@ function normalizeAgentsFromConfig(config: OpenClawConfig): AgentInfo[] {
 }
 
 export const useMemoryStore = defineStore('memory', () => {
-  const wsStore = useWebSocketStore()
+  // Replace WebSocket store with centralized connection store RPC accessor
+  function getRpc() {
+    const connStore = useConnectionStore()
+    return connStore.getRpc()
+  }
 
   const agents = ref<AgentInfo[]>([])
   const defaultAgentId = ref('main')
@@ -154,7 +158,7 @@ export const useMemoryStore = defineStore('memory', () => {
     loadingAgents.value = true
     lastError.value = null
     try {
-      const result = await wsStore.rpc.listAgents()
+      const result = await getRpc()!.listAgents()
       if (result.agents.length > 0) {
         agents.value = result.agents
         defaultAgentId.value = result.defaultId || result.mainKey || result.agents[0]?.id || 'main'
@@ -163,7 +167,7 @@ export const useMemoryStore = defineStore('memory', () => {
       }
     } catch (error) {
       try {
-        const config = await wsStore.rpc.getConfig()
+        const config = await getRpc()!.getConfig()
         const fallbackAgents = normalizeAgentsFromConfig(config)
         agents.value = fallbackAgents
         defaultAgentId.value = fallbackAgents[0]?.id || 'main'
@@ -187,7 +191,7 @@ export const useMemoryStore = defineStore('memory', () => {
     loadingFiles.value = true
     lastError.value = null
     try {
-      const result = await wsStore.rpc.listAgentFiles(agentId)
+      const result = await getRpc()!.listAgentFiles(agentId)
       workspace.value = result.workspace || ''
       files.value = sortKnownFiles(result.files)
       ensureKnownPlaceholders()
@@ -210,7 +214,7 @@ export const useMemoryStore = defineStore('memory', () => {
     loadingFileContent.value = true
     lastError.value = null
     try {
-      const result = await wsStore.rpc.getAgentFile(selectedAgentId.value, name)
+      const result = await getRpc()!.getAgentFile(selectedAgentId.value, name)
       workspace.value = result.workspace || workspace.value
       upsertFile(result.file)
       files.value = sortKnownFiles(files.value)
@@ -230,7 +234,7 @@ export const useMemoryStore = defineStore('memory', () => {
     saving.value = true
     lastError.value = null
     try {
-      const result = await wsStore.rpc.setAgentFile(selectedAgentId.value, name, content)
+      const result = await getRpc()!.setAgentFile(selectedAgentId.value, name, content)
       workspace.value = result.workspace || workspace.value
       upsertFile(result.file)
       files.value = sortKnownFiles(files.value)

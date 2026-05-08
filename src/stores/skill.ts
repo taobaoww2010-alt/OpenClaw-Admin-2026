@@ -1,6 +1,6 @@
 import { ref, watch } from 'vue'
 import { defineStore } from 'pinia'
-import { useWebSocketStore } from './websocket'
+import { useConnectionStore } from './connection'
 import type { Skill } from '@/api/types'
 
 const STORAGE_KEY_SHOW_BUNDLED = 'openclaw_skill_show_bundled'
@@ -104,7 +104,11 @@ export const useSkillStore = defineStore('skill', () => {
     localStorage.setItem(STORAGE_KEY_CHAT_VISIBILITY, JSON.stringify(normalizeBooleanRecord(val)))
   }, { deep: true })
 
-  const wsStore = useWebSocketStore()
+  // Bridge to RPC through the central Connection store
+  function getRpc() {
+    const connStore = useConnectionStore()
+    return connStore.getRpc()
+  }
 
   function resolveChatDefaultVisibleByName(name: string): boolean {
     const skill = skills.value.find((entry) => entry.name === name)
@@ -143,7 +147,7 @@ export const useSkillStore = defineStore('skill', () => {
     loading.value = true
     error.value = null
     try {
-      skills.value = await wsStore.rpc.listSkills()
+      skills.value = await getRpc()!.listSkills()
     } catch (err) {
       skills.value = []
       const message = err instanceof Error ? err.message : String(err)
@@ -158,7 +162,7 @@ export const useSkillStore = defineStore('skill', () => {
     installing.value = name
     error.value = null
     try {
-      await wsStore.rpc.installSkill(name)
+      await getRpc()!.installSkill(name)
       await fetchSkills()
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
@@ -173,7 +177,7 @@ export const useSkillStore = defineStore('skill', () => {
     loading.value = true
     error.value = null
     try {
-      await wsStore.rpc.updateSkills()
+      await getRpc()!.updateSkills()
       await fetchSkills()
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)

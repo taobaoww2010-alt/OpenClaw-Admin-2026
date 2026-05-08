@@ -24,7 +24,8 @@ import {
 } from '@vicons/ionicons5'
 import { useI18n } from 'vue-i18n'
 import StatCard from '@/components/common/StatCard.vue'
-import { useWebSocketStore } from '@/stores/websocket'
+import { useConnectionStore } from '@/stores/connection'
+import { ConnectionState } from '@/api/types'
 import { useHermesConnectionStore } from '@/stores/hermes/connection'
 import { formatRelativeTime } from '@/utils/format'
 import type {
@@ -41,7 +42,7 @@ type RangePreset = 'today' | '7d' | '30d' | 'custom'
 type UsageMode = 'tokens' | 'cost'
 
 const router = useRouter()
-const wsStore = useWebSocketStore()
+const connectionStore = useConnectionStore()
 const hermesConnStore = useHermesConnectionStore()
 const isHermes = computed(() => hermesConnStore.currentGateway === 'hermes')
 const { t, locale } = useI18n()
@@ -87,10 +88,10 @@ const connectionLabel = computed(() => {
       ? t('pages.dashboard.connection.connected')
       : t('pages.dashboard.connection.connecting')
   }
-  if (wsStore.state === 'connected') return t('pages.dashboard.connection.connected')
-  if (wsStore.state === 'connecting') return t('pages.dashboard.connection.connecting')
-  if (wsStore.state === 'reconnecting') return t('pages.dashboard.connection.reconnecting')
-  if (wsStore.state === 'failed') return t('pages.dashboard.connection.failed')
+  if (connectionStore.openclaw.state === ConnectionState.CONNECTED) return t('pages.dashboard.connection.connected')
+  if (connectionStore.openclaw.state === ConnectionState.CONNECTING) return t('pages.dashboard.connection.connecting')
+  if (connectionStore.openclaw.state === ConnectionState.RECONNECTING) return t('pages.dashboard.connection.reconnecting')
+  if (connectionStore.openclaw.state === ConnectionState.FAILED) return t('pages.dashboard.connection.failed')
   return t('pages.dashboard.connection.disconnected')
 })
 
@@ -98,9 +99,9 @@ const connectionType = computed<'success' | 'warning' | 'error' | 'default'>(() 
   if (isHermes.value) {
     return hermesConnStore.hermesConnected ? 'success' : 'warning'
   }
-  if (wsStore.state === 'connected') return 'success'
-  if (wsStore.state === 'connecting' || wsStore.state === 'reconnecting') return 'warning'
-  if (wsStore.state === 'failed') return 'error'
+  if (connectionStore.openclaw.state === ConnectionState.CONNECTED) return 'success'
+  if (connectionStore.openclaw.state === ConnectionState.CONNECTING || connectionStore.openclaw.state === ConnectionState.RECONNECTING) return 'warning'
+  if (connectionStore.openclaw.state === ConnectionState.FAILED) return 'error'
   return 'default'
 })
 
@@ -438,8 +439,8 @@ onMounted(async () => {
       await hermesConnStore.connect()
     }
   } else {
-    retryAfterFirstConnect = wsStore.state !== 'connected'
-    cleanupStateChange = wsStore.subscribe('stateChange', () => {
+    retryAfterFirstConnect = connectionStore.openclaw.state !== ConnectionState.CONNECTED
+    cleanupStateChange = connectionStore.subscribeWs('stateChange', () => {
       maybeRetryAfterConnect()
     })
   }
@@ -456,7 +457,7 @@ onUnmounted(() => {
 
 function maybeRetryAfterConnect() {
   if (!retryAfterFirstConnect) return
-  if (wsStore.state !== 'connected') return
+  if (connectionStore.openclaw.state !== ConnectionState.CONNECTED) return
   if (refreshing.value) return
 
   retryAfterFirstConnect = false
@@ -531,18 +532,19 @@ async function refreshDashboard() {
       }
     } else {
       // OpenClaw 模式：通过 WebSocket RPC 获取数据
+      const rpc = connectionStore.getRpc()!
       const [sessionsRes, cronsRes, modelsRes, skillsRes, configRes, usageRes, usageCostRes] = await Promise.allSettled([
-        wsStore.rpc.listSessions(),
-        wsStore.rpc.listCrons(),
-        wsStore.rpc.listModels(),
-        wsStore.rpc.listSkills(),
-        wsStore.rpc.getConfig(),
-        wsStore.rpc.getSessionsUsage({
+        rpc.listSessions(),
+        rpc.listCrons(),
+        rpc.listModels(),
+        rpc.listSkills(),
+        rpc.getConfig(),
+        rpc.getSessionsUsage({
           startDate: usageStartDate.value,
           endDate: usageEndDate.value,
           limit: 1000,
         }),
-        wsStore.rpc.getUsageCost({
+        rpc.getUsageCost({
           startDate: usageStartDate.value,
           endDate: usageEndDate.value,
         }),

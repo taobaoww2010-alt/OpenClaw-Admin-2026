@@ -37,13 +37,13 @@ import {
 } from '@vicons/ionicons5'
 import { useI18n } from 'vue-i18n'
 import { useBackupStore } from '@/stores/backup'
-import { useWebSocketStore } from '@/stores/websocket'
+import { useConnectionStore } from '@/stores/connection'
 import type { BackupItem, BackupTask } from '@/api/types/backup'
 
 const { t } = useI18n()
 const message = useMessage()
 const backupStore = useBackupStore()
-const wsStore = useWebSocketStore()
+const connectionStore = useConnectionStore()
 
 const showRestoreModal = ref(false)
 const selectedBackup = ref<string | null>(null)
@@ -265,8 +265,8 @@ let unsubscribeDisconnect: (() => void) | null = null
 onMounted(() => {
   void backupStore.initialize()
   void backupStore.fetchTasks()
-  unsubscribe = wsStore.subscribe('backupProgress', handleBackupProgress)
-  unsubscribeDisconnect = wsStore.subscribe('disconnected', () => {
+  unsubscribe = connectionStore.subscribeWs('backupProgress', handleBackupProgress)
+  unsubscribeDisconnect = connectionStore.subscribeWs('disconnected', () => {
     if (backupStore.hasActiveTask) {
       backupStore.markRunningTasksAsFailed('Connection lost - task interrupted')
     }
